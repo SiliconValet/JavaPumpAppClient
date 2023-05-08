@@ -35,13 +35,14 @@
           <gridbag weightx="1.0" weighty="0.0"/>
         </constraints>
         <properties>
-          <majorTickSpacing value="100"/>
-          <maximum value="800"/>
-          <minimum value="-800"/>
-          <minorTickSpacing value="50"/>
+          <majorTickSpacing value="10"/>
+          <maximum value="100"/>
+          <minimum value="-100"/>
+          <minorTickSpacing value="5"/>
           <paintLabels value="true"/>
           <paintTicks value="true"/>
           <paintTrack value="true"/>
+          <snapToTicks value="false"/>
           <value value="0"/>
           <valueIsAdjusting value="false"/>
         </properties>
@@ -98,6 +99,7 @@
           <gridbag weightx="0.0" weighty="0.0"/>
         </constraints>
         <properties>
+          <enabled value="false"/>
           <label value="Load data"/>
           <text value="Load data"/>
         </properties>
@@ -147,6 +149,7 @@
         </constraints>
         <properties>
           <background color="-12794841"/>
+          <enabled value="false"/>
           <text value="Run" noi18n="true"/>
         </properties>
       </component>

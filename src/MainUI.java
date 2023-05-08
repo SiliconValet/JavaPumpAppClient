@@ -16,6 +16,7 @@ import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
@@ -31,13 +32,13 @@ import javax.swing.text.StyleContext;
 import javax.swing.JFileChooser;
 
 import java.io.BufferedReader;
-import java.util.List;
 
 /**
  * The type Main ui.
  */
 public class MainUI extends JFrame {
 
+  public static final int logBufferSize = 10000;
   private JSlider PrimeSpeedSlider;
   private JPanel rootPanel;
   private JButton connectSerial;
@@ -112,30 +113,63 @@ public class MainUI extends JFrame {
     // Connect to serial port on button click.
     addListenerForConnectSerialButton();
     addListenerForLoadDataButton();
+    addListenerForPrimeButton();
+    addListenerForPrimeSpeedSlider();
+    addListenerForRunButton();
+  }
 
-    SwingWorker<Boolean, Integer> computationThread = new SwingWorker<>() {
+  private void addListenerForRunButton() {
+    runButton.addActionListener(new ActionListener() {
+      /**
+       * @param e the event to be processed
+       */
       @Override
-      protected Boolean doInBackground() throws Exception {
-        // Background work
-        while (serialIsConnected) {
-          // If there's waveform data...
-          if (waveformData.size() != 0) {
-            // cycle through waveform data and choose an appropriate velocity
+      public void actionPerformed(ActionEvent e) {
+        if (!serialIsConnected) {
+          logger("Serial port not connected");
+          return;
+        }
+
+        if (e.getActionCommand().equals("Run")) {
+          runButton.setText("Stop");
+          runButton.setBackground(Color.RED);
+          motorRunning = true;
+          sendSerialData("R:un\n".getBytes());
+          logger("Run command 'R:un' sent");
+        } else {
+          runButton.setText("Run");
+          runButton.setBackground(Color.GREEN);
+          sendSerialData("S:top\n".getBytes());
+          logger("Run command 'S:top' sent");
+          motorRunning = false;
+        }
+
+      }
+    });
+  }
+
+  private void addListenerForPrimeSpeedSlider() {
+    PrimeSpeedSlider.addChangeListener(new ChangeListener() {
+      /**
+       * @param e a ChangeEvent object
+       */
+      @Override
+      public void stateChanged(ChangeEvent e) {
+        if (motorPriming) {
+          String cmd;
+          if (serialIsConnected) {
+            cmd = "P:" + PrimeSpeedSlider.getValue() + "\n";
+            sendSerialData(cmd.getBytes());
+            logger("Prime command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
+          } else {
+            logger("Serial port not connected");
           }
         }
-        return true;
       }
+    });
+  }
 
-      @Override
-      protected void process(List<Integer> chunks) {
-        // Process results
-      }
-
-      @Override
-      protected void done() {
-        // Finish sequence
-      }
-    };
+  private void addListenerForPrimeButton() {
     PrimeButton.addActionListener(new ActionListener() {
       /**
        * @param e the event to be processed
@@ -147,68 +181,23 @@ public class MainUI extends JFrame {
           PrimeButton.setText("Stop");
           String cmd;
           if (serialIsConnected) {
-            cmd = "S:" + PrimeSpeedSlider.getValue() + "\n";
-            try {
-              serialOutputStream.write(cmd.getBytes());
-              logger("Prime command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
-            } catch (IOException ex) {
-              logger("Error sending '" + cmd + "' prime command");
-            }
+            cmd = "P:" + PrimeSpeedSlider.getValue() + "\n";
+            sendSerialData(cmd.getBytes());
           } else {
             logger("Serial port not connected");
           }
         } else {
           motorPriming = false;
+          sendSerialData("S:top\n".getBytes());
           PrimeButton.setText("Prime");
         }
       }
     });
-
-    PrimeSpeedSlider.addChangeListener(new ChangeListener() {
-      /**
-       * @param e a ChangeEvent object
-       */
-      @Override
-      public void stateChanged(ChangeEvent e) {
-        if (motorPriming) {
-          String cmd;
-          if (serialIsConnected) {
-            cmd = "S:" + PrimeSpeedSlider.getValue() + "\n";
-            try {
-              serialOutputStream.write(cmd.getBytes());
-              logger("Prime command '" + cmd + "' sent");
-            } catch (IOException ex) {
-              logger("Error sending '" + cmd + "' prime command");
-            }
-          } else {
-            logger("Serial port not connected");
-          }
-        }
-      }
-    });
-
-    runButton.addActionListener(new ActionListener() {
-      /**
-       * @param e the event to be processed
-       */
-      @Override
-      public void actionPerformed(ActionEvent e) {
-        if (serialIsConnected && e.getActionCommand().equals("Run")) {
-          runButton.setText("Stop");
-          runButton.setBackground(Color.RED);
-          motorRunning = true;
-        } else {
-          runButton.setText("Run");
-          runButton.setBackground(Color.GREEN);
-          motorRunning = false;
-          logger("Serial port not connected");
-        }
-
-      }
-    });
-
   }
 
+  /**
+   * Add listener for load data button.
+   */
   private void addListenerForLoadDataButton() {
     loadDataButton.addActionListener(new ActionListener() {
       @Override
@@ -226,6 +215,14 @@ public class MainUI extends JFrame {
           loadSelectedFile(selectedFile, MainUI.this.waveformData);
           logger("Loaded waveform '" + selectedFile.getAbsolutePath() + "'");
           logger("Waveform length: " + MainUI.this.waveformData.size());
+
+          sendSerialData("L:oad\n".getBytes());
+          for (Float waveformDatum : MainUI.this.waveformData) {
+            sendSerialData((waveformDatum + "\n").getBytes());
+          }
+          // Finish sending data.
+          sendSerialData("\n".getBytes());
+
           SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
@@ -243,75 +240,6 @@ public class MainUI extends JFrame {
     });
   }
 
-  private void loadSelectedFile(File selectedFile, ArrayList<Float> waveformData) {
-    System.out.println("Selected file: " + selectedFile.getAbsolutePath());
-    BufferedReader bf = null;
-    try {
-      bf = new BufferedReader(new FileReader(selectedFile));
-      String line = bf.readLine();
-      // checking for end of file.
-      while (line != null) {
-        waveformData.add(Float.parseFloat(line));
-        line = bf.readLine();
-      }
-
-      // Close file.
-      bf.close();
-      logger("Loaded waveform '" + selectedFile.getAbsolutePath() + "'");
-    } catch (IOException ex) {
-      JDialog d = new JDialog();
-      d.add(new JLabel("File could not be opened" + ex));
-      d.setVisible(true);
-      return;
-    }
-  }
-
-  private SwingWorker<Boolean, Integer> createMotorUpdaterSwingWorker() {
-    SwingWorker<Boolean, Integer> computationThread = new SwingWorker<>() {
-      private static int ticks = 0;
-
-      @Override
-      protected Boolean doInBackground() throws Exception {
-        // Background work
-        while (serialIsConnected) {
-          // If there's waveform data...
-          if (waveformData.size() != 0) {
-            // cycle through waveform data and choose an appropriate velocity
-            if (ticks < waveformData.size()) {
-              float ScaleFactor = ScaleInput.getValue();
-              int velocity = (int) (waveformData.get(ticks) * ScaleFactor);
-              String cmd = "S:" + velocity + "\n";
-              try {
-                serialOutputStream.write(cmd.getBytes());
-                logger("Command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
-              } catch (IOException ex) {
-                logger("Error sending '" + cmd + "' command");
-              }
-              ticks++;
-            } else {
-              ticks = 0;
-            }
-          }
-        }
-        return true;
-      }
-
-      @Override
-      protected void process(List<Integer> chunks) {
-        // Process results
-      }
-
-      @Override
-      protected void done() {
-        // Finish sequence
-      }
-    };
-
-    logger("Created SwingWorker thread for motor updates");
-
-    return computationThread;
-  }
-
   /**
    * Respond to the button click for connect button.
    */
@@ -324,6 +252,42 @@ public class MainUI extends JFrame {
         serialConnect(e, port);
       }
     });
+  }
+
+  private void loadSelectedFile(File selectedFile, ArrayList<Float> waveformData) {
+    System.out.println("Selected file: " + selectedFile.getAbsolutePath());
+    BufferedReader bf;
+    try {
+      logger("Loading waveform '" + selectedFile.getAbsolutePath() + "'");
+
+      bf = new BufferedReader(new FileReader(selectedFile));
+      String line = bf.readLine();
+      // checking for end of file.
+      while (line != null) {
+        waveformData.add(Float.parseFloat(line));
+        line = bf.readLine();
+      }
+
+      // Close file.
+      bf.close();
+    } catch (IOException ex) {
+      JDialog d = new JDialog();
+      d.add(new JLabel("File could not be opened" + ex));
+      d.setVisible(true);
+    }
+  }
+
+  private synchronized void sendSerialData(byte[] cmd) {
+    if (serialIsConnected) {
+      try {
+        serialOutputStream.write(cmd);
+        logger("[Serial] Sent '" + (new String(cmd, StandardCharsets.UTF_8)).trim() + "' command");
+      } catch (IOException ex) {
+        logger("[Serial] Error sending '" + (new String(cmd, StandardCharsets.UTF_8)).trim() + "' command");
+      }
+    } else {
+      logger("Serial port not connected");
+    }
   }
 
   private void serialConnect(ActionEvent e, String port) {
@@ -345,11 +309,14 @@ public class MainUI extends JFrame {
 
     if (serialIsConnected) {
       connectedRadioButton.setEnabled(true);
+      loadDataButton.setEnabled(true);
       serialOutputStream = serialPort.getOutputStream();
       connectSerial.setText("Disconnect");
       addSerialReadListener(serialPort);
     } else {
       connectedRadioButton.setEnabled(false);
+      loadDataButton.setEnabled(false);
+      runButton.setEnabled(false);
       connectSerial.setText("Connect");
     }
   }
@@ -375,20 +342,18 @@ public class MainUI extends JFrame {
 
       @Override
       public void serialEvent(SerialPortEvent serialPortEvent) {
-        String incomingLine = "";
+        String incomingLine;
         incomingLine = new String(serialPortEvent.getReceivedData()).trim();
         String[] values = incomingLine.split(":");
         System.out.println(incomingLine + "\n");
         switch (values[0]) {
-          case "E" -> {
-            logger(incomingLine);
-            logger("Error: " + values[1]);
-            System.out.println("Error: " + values[1]);
+          case "E" -> logger("Error: " + values[1]);
+          case "A" -> logger("Ack set motor speed: " + values[1]);
+          case "D" -> {
+            logger("Data loaded to microcontroller: " + values[1] + " lines");
+            runButton.setEnabled(true);
           }
-          case "A" -> {
-            logger("Ack set motor speed: " + values[1]);
-            System.out.println("Ack set motor speed: " + values[1]);
-          }
+          case "I" -> logger("Info: " + values[1]);
           case "P" -> {
             double pval = Double.parseDouble(values[1]);
             SwingUtilities.invokeLater(new Runnable() {
@@ -408,15 +373,6 @@ public class MainUI extends JFrame {
   }
 
   /**
-   * Updates stepper motor velocity based on PID controller feedback.
-   *
-   * @param pressure Pressure feedback from the pressure sensor.
-   */
-  private void usePressureDataToUpdatePidController(float pressure) {
-
-  }
-
-  /**
    * Log text to the log text area.
    *
    * @param text Text to be logged.
@@ -427,6 +383,12 @@ public class MainUI extends JFrame {
       @Override
       public void run() {
         logTextArea.append(text + "\n");
+        logTextArea.setCaretPosition(logTextArea.getDocument().getLength());
+
+        // Cycle the logs.
+        if (logTextArea.getDocument().getLength() > logBufferSize) {
+          logTextArea.setText("");
+        }
       }
     });
   }
@@ -463,8 +425,8 @@ public class MainUI extends JFrame {
     waveformDataSeries.setMaximumItemCount(100);
     XYSeriesCollection waveformDataChartTimeSeriesCollection = new XYSeriesCollection(waveformDataSeries);
 
-    JFreeChart pressureChart = this.createPressureChart(pressureChartTimeSeriesCollection, "Pressure");
-    JFreeChart motorFeedbackChart = this.createMotorFeedbackChart(waveformDataChartTimeSeriesCollection, "Motor");
+    JFreeChart pressureChart = this.createPressureChart(pressureChartTimeSeriesCollection);
+    JFreeChart motorFeedbackChart = this.createMotorFeedbackChart(waveformDataChartTimeSeriesCollection);
 
     this.pressureChartPanel = new ChartPanel(pressureChart);
     this.motorFeedbackPanel = new ChartPanel(motorFeedbackChart);
@@ -476,12 +438,11 @@ public class MainUI extends JFrame {
    * Create the JFreeChart pressure chart from params.
    *
    * @param dataset Data set to use for the chart.
-   * @param title   Title of the chart.
    * @return JFreeChart object.
    */
-  private JFreeChart createPressureChart(TimeSeriesCollection dataset, String title) {
+  private JFreeChart createPressureChart(TimeSeriesCollection dataset) {
     JFreeChart chart = ChartFactory.createTimeSeriesChart(
-      title,
+      "Pressure",
       "Time",
       "Sensor value",
       dataset,
@@ -501,12 +462,11 @@ public class MainUI extends JFrame {
    * Create the JFreeChart motor feedback chart from params.
    *
    * @param dataset Data set to use for the chart.
-   * @param title   Title of the chart.
    * @return JFreeChart object.
    */
-  private JFreeChart createMotorFeedbackChart(XYSeriesCollection dataset, String title) {
+  private JFreeChart createMotorFeedbackChart(XYSeriesCollection dataset) {
     JFreeChart chart = ChartFactory.createXYLineChart(
-      title,
+      "Motor",
       "Time",
       "Velocity value",
       dataset,
@@ -556,13 +516,14 @@ public class MainUI extends JFrame {
     gbc.fill = GridBagConstraints.HORIZONTAL;
     rootPanel.add(connectSerial, gbc);
     PrimeSpeedSlider = new JSlider();
-    PrimeSpeedSlider.setMajorTickSpacing(100);
-    PrimeSpeedSlider.setMaximum(800);
-    PrimeSpeedSlider.setMinimum(-800);
-    PrimeSpeedSlider.setMinorTickSpacing(50);
+    PrimeSpeedSlider.setMajorTickSpacing(10);
+    PrimeSpeedSlider.setMaximum(100);
+    PrimeSpeedSlider.setMinimum(-100);
+    PrimeSpeedSlider.setMinorTickSpacing(5);
     PrimeSpeedSlider.setPaintLabels(true);
     PrimeSpeedSlider.setPaintTicks(true);
     PrimeSpeedSlider.setPaintTrack(true);
+    PrimeSpeedSlider.setSnapToTicks(false);
     PrimeSpeedSlider.setValue(0);
     PrimeSpeedSlider.setValueIsAdjusting(false);
     PrimeSpeedSlider.putClientProperty("Slider.paintThumbArrowShape", Boolean.FALSE);
@@ -614,6 +575,7 @@ public class MainUI extends JFrame {
     gbc.fill = GridBagConstraints.HORIZONTAL;
     rootPanel.add(PrimeButton, gbc);
     loadDataButton = new JButton();
+    loadDataButton.setEnabled(false);
     loadDataButton.setLabel("Load data");
     loadDataButton.setText("Load data");
     gbc = new GridBagConstraints();
@@ -655,6 +617,7 @@ public class MainUI extends JFrame {
     rootPanel.add(logScrollBar, gbc);
     runButton = new JButton();
     runButton.setBackground(new Color(-12794841));
+    runButton.setEnabled(false);
     runButton.setText("Run");
     gbc = new GridBagConstraints();
     gbc.gridx = 0;
