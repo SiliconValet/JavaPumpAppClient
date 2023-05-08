@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/Pulsatile Flow Controller.iml" filepath="$PROJECT_DIR$/Pulsatile Flow Controller.iml" />
+      <module fileurl="file://$PROJECT_DIR$/flowcontroller.iml" filepath="$PROJECT_DIR$/flowcontroller.iml" />
     </modules>
   </component>
 </project>
