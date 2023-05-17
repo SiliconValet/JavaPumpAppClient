@@ -9,6 +9,8 @@
 // You don't *need* a reset and EOC pin for most uses, so we set to -1 and don't connect
 #define RESET_PIN  -1  // set to any GPIO pin # to hard-reset on begin()
 #define EOC_PIN    -1  // set to any GPIO pin to read end-of-conversion by pin
+// Set I2C bus to use: Wire, Wire1, etc.
+#define WIRE Wire
 Adafruit_MPRLS mpr = Adafruit_MPRLS(RESET_PIN, EOC_PIN);
 
 const byte numChars = 32;
@@ -19,17 +21,23 @@ boolean fatalError = false;
 boolean priming = false;
 // Whether or not to run the motors.
 boolean runMotors = false;
+// Whether to show debugging.
+boolean debugging = false;
 
 // defines pins numbers
 const int stepPin = 5;
 const int directionPin = 6;
 const int enablePin = 7;
 
+#define positionalDataMaxElements 200
+
 int positionalDataCount = 0;
-float positionalData[200];
-int primingOffset = 0;
+float positionalData[positionalDataMaxElements];
+int primingSpeed = 0;
 int positionalDataIndex = 0;
-int dataTimeStepMS = 8;
+//int dataTimeStepMS = 8;
+int dataTimeStepMS = 100;
+float scaleMultiplier = 1.0;
 
 // Define a stepper and the pins it will use
 // 1 or AccelStepper::DRIVER means a stepper driver (with Step and Direction pins)
@@ -37,19 +45,18 @@ AccelStepper stepper(AccelStepper::DRIVER, stepPin, directionPin);
 
 int previousVelocity = 0;
 
-// Set I2C bus to use: Wire, Wire1, etc.
-#define WIRE Wire
 
 void setup() {
   Wire.begin();
-  Serial.begin(500000);
+  //Serial.begin(500000);
+  Serial.begin(19200);
   delay(1000);
 
   stepper.setEnablePin(enablePin);
   stepper.setPinsInverted(false,false,true);
   stepper.enableOutputs();
-  stepper.setAcceleration(100.0);
-  stepper.setMaxSpeed(1000.0);
+  stepper.setAcceleration(1000.0);
+  stepper.setMaxSpeed(400.0);
   stepper.setSpeed(0);
 
   // Initialize and test pressure sensor.
@@ -61,7 +68,6 @@ void setup() {
   // Send the initial "ack" to kick off the event loop.
   Serial.println(F("A:0"));
 }
-
 
 void loop() {
   // Fetch data from serial and process it.
@@ -78,8 +84,10 @@ void loop() {
     updatePrimingPosition();
   }
 
-  // Update stepper position.
-  stepper.run();
+  // Update stepper position if motors should be active.
+  if (runMotors || priming) {
+    stepper.run();
+  }
 }
 
 void updatePrimingPosition() {
@@ -91,25 +99,45 @@ void updatePrimingPosition() {
     lastUpdate = millis();
 
     // Update the target position as current + offset;
-    stepper.moveTo(stepper.currentPosition()+primingOffset);
+    stepper.moveTo(stepper.currentPosition()+primingSpeed);
+
+    // Debugging
     // Serial.print("I:");
     // Serial.print(stepper.currentPosition());
     // Serial.print(" -> ");
-    // Serial.println(stepper.currentPosition()+primingOffset);
+    // Serial.println(stepper.currentPosition()+primingSpeed);
   }
 }
 
 void updateTargetPosition() {
   static unsigned long lastUpdate = 0;
   const unsigned long currentTimeMs = millis();
+  int targetPos = 0;
 
   // If we have positional data to process.
   if (positionalDataCount > 0) {
     // If we have waited long enough, update the target position.
     if ((currentTimeMs - lastUpdate) > dataTimeStepMS) {
       lastUpdate = millis();
-      // Update the target position.
-      stepper.moveTo(positionalData[positionalDataIndex]);
+      // Update the target position. The int cast always truncates, so the +0.5 is
+      // a but of a hack to get it to round to nearest int.
+      targetPos = (int) ((positionalData[positionalDataIndex] * scaleMultiplier) + 0.5);
+      stepper.moveTo(targetPos);
+      
+      if (debugging) {
+        // Debugging.
+        Serial.print(F("I:CurrentPos "));
+        Serial.print(stepper.currentPosition());
+        Serial.print(F(" TargetPos "));
+        Serial.print(targetPos);
+        Serial.print(F(" RawTarget "));
+        Serial.print(positionalData[positionalDataIndex] * scaleMultiplier);
+        Serial.print(F(" A "));
+        Serial.print(stepper.acceleration(), 3);
+        Serial.print(F(" V "));
+        Serial.println(stepper.speed(), 3);
+      }
+      
       // Increment the index.
       positionalDataIndex++;
       // If we have reached the end of the data, stop the motors.
@@ -153,43 +181,83 @@ void receiveWithEndMarker() {
  * Load data from the serial port.
  * Last line in the data feed will be empty.
  */
-void loadPositionalDataFromSerial() {
+void loadPositionalDataFromSerial(int numRows) {
+  // Stop all motor movement.
+  runMotors = false;
+  priming = false;
   int i = 0;
+  byte ndx = 0;
+  // Re initialize the count of lines.
   positionalDataCount = 0;
+  // Reset the index for the iterator,
+  positionalDataIndex = 0;
+  const char endMarker = '\n';
+  char rc;
+  bool processing = true;
 
-  newData = false;
+  for (i=0; i<numRows; i++) {
+    processing = true;
+    while (processing == true) {
+      if (Serial.available()) {
+        rc = Serial.read();
 
-  // Wait for a new line of data.
-  while (newData == false) {
-    // Load the data from the serial port.
-    receiveWithEndMarker();
-  }
+        if (rc != endMarker) {
+          receivedChars[ndx] = rc;
+          ndx++;
+          if (ndx >= numChars) {
+            ndx = numChars - 1;
+          }
+        } else {
+          receivedChars[ndx] = '\0'; // terminate the string
+          ndx = 0;
+          processing = false;
+        }
+      }
+    }
 
-  // Load the positional data from the serial port.
-  while (strlen(receivedChars) != 0) {
-    positionalData[i] = atof(receivedChars);
-    i++;
+    // Debugging
+    // if (i == 0) {
+    //   Serial.print("I:First item received ");
+    //   Serial.println(receivedChars);
+    // }
 
-    newData = false;
-
-    // Wait for a new line of data.
-    while (newData == false) {
-      // Load the data from the serial port.
-      receiveWithEndMarker();
+    // Hedge against exceeding max elements.
+    if (i <= positionalDataMaxElements) {
+      positionalData[i] = atof(receivedChars);
+    }
+    else {
+      Serial.println(F("E:Exceeded maximum allowed data."));
     }
   }
+
+  // Debugging
+  // Serial.print("I:Last item received ");
+  // Serial.println(receivedChars);
+
+  // Debugging.
+  // for (i=0; i<numRows; i++) {
+  //   Serial.print(F("I:Data imported "));
+  //   Serial.print(i);
+  //   Serial.print(" ");
+  //   Serial.println(positionalData[i], 6);
+  // }
 
   positionalDataCount = i;
 
   // Inform controller of data load.
-  Serial.print("D:");
+  Serial.print(F("D:"));
   Serial.println(i);
+  
+  setNewHomePosition();
 }
 
 /**
  * Show the current pressure sensor reading.
  */
 void showPressureSensorUpdate() {
+  if (debugging) {
+    return;
+  }
   float pressure_hPa = mpr.readPressure();
   float pressure_mmHg = 0;
   char* tmp;
@@ -219,12 +287,17 @@ void processInput() {
 
     // Tokenize the string like 'S:123' to get the parts.
     switch (receivedChars[0]) {
-      case 'V':
+      case 'D':
         // Pull and toss the first token.
         strtok(receivedChars, ":");
-        // Convert the numeric bit to an integer.
-        updateVelocity(atoi(strtok(NULL, ":")));
-        Serial.println(F("I:Velocity updated"));
+        if (strcmp(strtok(NULL, ":"),"T")) {
+          debugging = true;
+          Serial.println(F("I:Debugging enabled."));
+        } 
+        else {
+          debugging = false;
+          Serial.println(F("I:Debugging disabled."));
+        }
         break;
       // Update (F)requency
       case 'F':
@@ -232,6 +305,16 @@ void processInput() {
         strtok(receivedChars, ":");
         // Convert the numeric bit to an integer.
         updateStepFrequency(atoi(strtok(NULL, ":")));
+        break;
+      case 'H':
+        setNewHomePosition();
+        break;
+      // (L)oad data
+      case 'L': 
+        // Pull and toss the first token.
+        strtok(receivedChars, ":");
+        // Convert the numeric bit to an integer.
+        loadPositionalDataFromSerial(atoi(strtok(NULL, ":")));
         break;
       // (P)rime pump
       case 'P':
@@ -241,10 +324,6 @@ void processInput() {
         // Convert the numeric bit to an integer.
         updatePriming(atoi(strtok(NULL, ":")));
         Serial.println(F("I:Priming"));
-        break;
-      // (L)oad data
-      case 'L': 
-        loadPositionalDataFromSerial();
         break;
       // (R)un application.
       case 'R':
@@ -257,6 +336,20 @@ void processInput() {
         priming = false;
         Serial.println(F("I:Application stopped"));
         break;
+      case 'V':
+        // Pull and toss the first token.
+        strtok(receivedChars, ":");
+        // Convert the numeric bit to an integer.
+        updateVelocity(atoi(strtok(NULL, ":")));
+        Serial.println(F("I:Velocity updated"));
+        break;
+      // Update scale multiplier for positional data
+      case 'X':
+        // Pull and toss the first token.
+        strtok(receivedChars, ":");
+        updateScaleMultiplier(atoi(strtok(NULL, ":")));
+        break;
+      // Error.
       case 'E':
       default: 
         Serial.print(F("E:Received unknown command: "));
@@ -269,14 +362,26 @@ void processInput() {
   }
 }
 
+void setNewHomePosition() {
+  stepper.setCurrentPosition(0);
+}
+
 void updatePriming(int val) {
-  primingOffset = val;
-  Serial.print("I:Priming offset set to: ");
-  Serial.println(primingOffset);
+  primingSpeed = val;
+  Serial.print(F("I:P:"));
+  Serial.println(primingSpeed);
+}
+
+void updateScaleMultiplier(int val) {
+  scaleMultiplier = val;
+  Serial.print(F("I:Scale multiplier updated"));
+  Serial.println(scaleMultiplier, 3);
 }
 
 void updateStepFrequency(int val) {
   dataTimeStepMS = (1/val)*1000;
+  Serial.print(F("I:Step frequency updated"));
+  Serial.println(dataTimeStepMS, 3);
 }
 
 void updateVelocity(int val) {

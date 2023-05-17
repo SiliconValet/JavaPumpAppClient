@@ -8,6 +8,12 @@
       <element id="module-output" name="flowcontroller" />
       <element id="extracted-dir" path="$MAVEN_REPOSITORY$/org/jfree/jfreechart/1.5.3/jfreechart-1.5.3.jar" path-in-jar="/" />
       <element id="extracted-dir" path="$MAVEN_REPOSITORY$/com/fazecast/jSerialComm/2.9.3/jSerialComm-2.9.3.jar" path-in-jar="/" />
+      <element id="library" level="project" name="fazecast.jSerialComm" />
+      <element id="library" level="project" name="forms_rt-7.0.3" />
+      <element id="library" level="project" name="intellij.forms_rt" />
+      <element id="library" level="project" name="jfree.jfreechart" />
+      <element id="library" level="project" name="Maven: com.fazecast:jSerialComm:2.9.3" />
+      <element id="library" level="project" name="Maven: org.jfree:jfreechart:1.5.3" />
     </root>
   </artifact>
 </component>

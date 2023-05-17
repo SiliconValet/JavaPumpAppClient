@@ -15,5 +15,6 @@
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="library" name="Maven: org.jfree:jfreechart:1.5.3" level="project" />
     <orderEntry type="library" name="Maven: com.fazecast:jSerialComm:2.9.3" level="project" />
+    <orderEntry type="library" name="forms_rt-7.0.3" level="project" />
   </component>
 </module>

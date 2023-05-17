@@ -1,4 +1,6 @@
 import com.fazecast.jSerialComm.*;
+import com.intellij.uiDesigner.core.GridConstraints;
+import com.intellij.uiDesigner.core.GridLayoutManager;
 import org.jfree.chart.ChartFactory;
 import org.jfree.chart.ChartPanel;
 import org.jfree.chart.JFreeChart;
@@ -57,6 +59,16 @@ public class MainUI extends JFrame {
   private JScrollBar logScrollBar;
   private JButton runButton;
   private JSlider ScaleInput;
+  private JTabbedPane tabbedPane1;
+  private JTextArea instructionsTextArea;
+  private JPanel instructionsTextPanel;
+  private JPanel logPanel;
+  private JLabel deviceChooserLabel;
+  private JPanel ChartPanelContainer;
+  private JLabel scaleAmplitudeLabel;
+  private JTextField timeStepMS;
+  private JButton timeStepMSButton;
+  private JCheckBox debugCheckBox;
 
   public volatile SerialPort serialPort;
 
@@ -116,6 +128,73 @@ public class MainUI extends JFrame {
     addListenerForPrimeButton();
     addListenerForPrimeSpeedSlider();
     addListenerForRunButton();
+    addListenerForScaleSlider();
+    addListenerForTimeStepMSButton();
+    addListenerForDebugCheckbox();
+  }
+
+  private void addListenerForDebugCheckbox() {
+    debugCheckBox.addActionListener(new ActionListener() {
+      /**
+       * @param e the event to be processed
+       */
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        if (!serialIsConnected) {
+          logger("Serial port not connected");
+          return;
+        }
+        String cmd;
+        cmd = "D:" + (debugCheckBox.isSelected() ? 'F' : 'T') + "\n";
+        sendSerialData(cmd.getBytes());
+        logger("Debug command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
+      }
+    });
+  }
+
+  private void addListenerForTimeStepMSButton() {
+    timeStepMSButton.addActionListener(new ActionListener() {
+      /**
+       * @param e the event to be processed
+       */
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        if (!serialIsConnected) {
+          logger("Serial port not connected");
+          return;
+        }
+
+        if (e.getActionCommand().equals("Set")) {
+          String cmd;
+          cmd = "F:" + timeStepMS.getText() + "\n";
+          sendSerialData(cmd.getBytes());
+          logger("Time step command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
+        }
+
+      }
+    });
+  }
+
+  private void addListenerForScaleSlider() {
+    ScaleInput.addChangeListener(new ChangeListener() {
+      /**
+       * @param e a ChangeEvent object
+       */
+      @Override
+      public void stateChanged(ChangeEvent e) {
+        JSlider source = (JSlider) e.getSource();
+        if (!source.getValueIsAdjusting()) {
+          if (serialIsConnected) {
+            String cmd;
+            cmd = "X:" + ScaleInput.getValue() + "\n";
+            sendSerialData(cmd.getBytes());
+            logger("Scale command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
+          } else {
+            logger("Serial port not connected");
+          }
+        }
+      }
+    });
   }
 
   private void addListenerForRunButton() {
@@ -155,14 +234,17 @@ public class MainUI extends JFrame {
        */
       @Override
       public void stateChanged(ChangeEvent e) {
-        if (motorPriming) {
-          String cmd;
-          if (serialIsConnected) {
-            cmd = "P:" + PrimeSpeedSlider.getValue() + "\n";
-            sendSerialData(cmd.getBytes());
-            logger("Prime command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
-          } else {
-            logger("Serial port not connected");
+        JSlider source = (JSlider) e.getSource();
+        if (!source.getValueIsAdjusting()) {
+          if (motorPriming) {
+            String cmd;
+            if (serialIsConnected) {
+              cmd = "P:" + PrimeSpeedSlider.getValue() + "\n";
+              sendSerialData(cmd.getBytes());
+              logger("Prime command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
+            } else {
+              logger("Serial port not connected");
+            }
           }
         }
       }
@@ -177,10 +259,11 @@ public class MainUI extends JFrame {
       @Override
       public void actionPerformed(ActionEvent e) {
         if (e.getActionCommand().equals("Prime")) {
+
           motorPriming = true;
           PrimeButton.setText("Stop");
-          String cmd;
           if (serialIsConnected) {
+            String cmd;
             cmd = "P:" + PrimeSpeedSlider.getValue() + "\n";
             sendSerialData(cmd.getBytes());
           } else {
@@ -190,6 +273,13 @@ public class MainUI extends JFrame {
           motorPriming = false;
           sendSerialData("S:top\n".getBytes());
           PrimeButton.setText("Prime");
+          if (serialIsConnected) {
+            String cmd;
+            cmd = "H:ome\n";
+            sendSerialData(cmd.getBytes());
+          } else {
+            logger("Serial port not connected");
+          }
         }
       }
     });
@@ -212,16 +302,17 @@ public class MainUI extends JFrame {
 
         if (result == JFileChooser.APPROVE_OPTION) {
           File selectedFile = fileChooser.getSelectedFile();
+          // (Re)initialize the waveform data array.
+          MainUI.this.waveformData = new ArrayList<Float>();
           loadSelectedFile(selectedFile, MainUI.this.waveformData);
           logger("Loaded waveform '" + selectedFile.getAbsolutePath() + "'");
           logger("Waveform length: " + MainUI.this.waveformData.size());
 
-          sendSerialData("L:oad\n".getBytes());
+          sendSerialData(("L:" + String.valueOf(MainUI.this.waveformData.size()) + "\n").getBytes());
+
           for (Float waveformDatum : MainUI.this.waveformData) {
             sendSerialData((waveformDatum + "\n").getBytes());
           }
-          // Finish sending data.
-          sendSerialData("\n".getBytes());
 
           SwingUtilities.invokeLater(new Runnable() {
             @Override
@@ -281,9 +372,9 @@ public class MainUI extends JFrame {
     if (serialIsConnected) {
       try {
         serialOutputStream.write(cmd);
-        logger("[Serial] Sent '" + (new String(cmd, StandardCharsets.UTF_8)).trim() + "' command");
+        logger("[Serial] Sent '" + (new String(cmd, StandardCharsets.UTF_8)).trim());
       } catch (IOException ex) {
-        logger("[Serial] Error sending '" + (new String(cmd, StandardCharsets.UTF_8)).trim() + "' command");
+        logger("[Serial] Error sending '" + (new String(cmd, StandardCharsets.UTF_8)).trim());
       }
     } else {
       logger("Serial port not connected");
@@ -296,7 +387,7 @@ public class MainUI extends JFrame {
         logger("Connecting to: " + port);
         SerialPort[] portList = SerialPort.getCommPorts();
         serialPort = portList[SerialPortsComboBox.getSelectedIndex()];
-        serialPort.setBaudRate(500000);
+        serialPort.setBaudRate(19200);
         serialPort.flushIOBuffers();
         serialPort.openPort();
         serialIsConnected = serialPort.isOpen();
@@ -418,11 +509,11 @@ public class MainUI extends JFrame {
     dataset2.setValue(0, "Motor velocity", "0");
 
     pressureSensorSeries = new TimeSeries("Pressure sensor");
-    pressureSensorSeries.setMaximumItemCount(100);
+    pressureSensorSeries.setMaximumItemCount(110);
     TimeSeriesCollection pressureChartTimeSeriesCollection = new TimeSeriesCollection(pressureSensorSeries);
 
     waveformDataSeries = new XYSeries("Motor feedback");
-    waveformDataSeries.setMaximumItemCount(100);
+    waveformDataSeries.setMaximumItemCount(110);
     XYSeriesCollection waveformDataChartTimeSeriesCollection = new XYSeriesCollection(waveformDataSeries);
 
     JFreeChart pressureChart = this.createPressureChart(pressureChartTimeSeriesCollection);
@@ -468,7 +559,7 @@ public class MainUI extends JFrame {
     JFreeChart chart = ChartFactory.createXYLineChart(
       "Motor",
       "Time",
-      "Velocity value",
+      "Position value",
       dataset,
       PlotOrientation.VERTICAL,
       true,
@@ -495,6 +586,7 @@ public class MainUI extends JFrame {
     createUIComponents();
     rootPanel = new JPanel();
     rootPanel.setLayout(new GridBagLayout());
+    rootPanel.setBorder(BorderFactory.createTitledBorder(BorderFactory.createLoweredBevelBorder(), null, TitledBorder.DEFAULT_JUSTIFICATION, TitledBorder.DEFAULT_POSITION, null, null));
     SerialPortsComboBox = new JComboBox();
     SerialPortsComboBox.setEnabled(true);
     final DefaultComboBoxModel defaultComboBoxModel1 = new DefaultComboBoxModel();
@@ -508,51 +600,25 @@ public class MainUI extends JFrame {
     gbc.anchor = GridBagConstraints.WEST;
     gbc.fill = GridBagConstraints.HORIZONTAL;
     rootPanel.add(SerialPortsComboBox, gbc);
-    connectSerial = new JButton();
-    connectSerial.setText("Connect");
-    gbc = new GridBagConstraints();
-    gbc.gridx = 0;
-    gbc.gridy = 2;
-    gbc.fill = GridBagConstraints.HORIZONTAL;
-    rootPanel.add(connectSerial, gbc);
     PrimeSpeedSlider = new JSlider();
     PrimeSpeedSlider.setMajorTickSpacing(10);
-    PrimeSpeedSlider.setMaximum(100);
-    PrimeSpeedSlider.setMinimum(-100);
+    PrimeSpeedSlider.setMaximum(200);
+    PrimeSpeedSlider.setMinimum(-200);
     PrimeSpeedSlider.setMinorTickSpacing(5);
     PrimeSpeedSlider.setPaintLabels(true);
     PrimeSpeedSlider.setPaintTicks(true);
     PrimeSpeedSlider.setPaintTrack(true);
-    PrimeSpeedSlider.setSnapToTicks(false);
+    PrimeSpeedSlider.setSnapToTicks(true);
     PrimeSpeedSlider.setValue(0);
     PrimeSpeedSlider.setValueIsAdjusting(false);
     PrimeSpeedSlider.putClientProperty("Slider.paintThumbArrowShape", Boolean.FALSE);
     gbc = new GridBagConstraints();
     gbc.gridx = 1;
-    gbc.gridy = 8;
-    gbc.gridwidth = 3;
-    gbc.weightx = 1.0;
+    gbc.gridy = 10;
+    gbc.gridwidth = 6;
     gbc.anchor = GridBagConstraints.WEST;
     gbc.fill = GridBagConstraints.BOTH;
     rootPanel.add(PrimeSpeedSlider, gbc);
-    motorFeedbackPanel.setMinimumDrawHeight(400);
-    gbc = new GridBagConstraints();
-    gbc.gridx = 2;
-    gbc.gridy = 2;
-    gbc.gridheight = 4;
-    gbc.weightx = 1.0;
-    gbc.weighty = 2.0;
-    gbc.fill = GridBagConstraints.BOTH;
-    rootPanel.add(motorFeedbackPanel, gbc);
-    pressureChartPanel.setMinimumDrawHeight(800);
-    gbc = new GridBagConstraints();
-    gbc.gridx = 1;
-    gbc.gridy = 2;
-    gbc.gridheight = 4;
-    gbc.weightx = 1.0;
-    gbc.weighty = 2.0;
-    gbc.fill = GridBagConstraints.BOTH;
-    rootPanel.add(pressureChartPanel, gbc);
     connectedRadioButton = new JRadioButton();
     connectedRadioButton.setEnabled(false);
     connectedRadioButton.setForeground(new Color(-1));
@@ -564,38 +630,82 @@ public class MainUI extends JFrame {
     gbc.gridx = 1;
     gbc.gridy = 1;
     gbc.gridwidth = 2;
-    gbc.weightx = 1.0;
     gbc.anchor = GridBagConstraints.WEST;
     rootPanel.add(connectedRadioButton, gbc);
     PrimeButton = new JButton();
     PrimeButton.setText("Prime");
     gbc = new GridBagConstraints();
     gbc.gridx = 0;
-    gbc.gridy = 8;
+    gbc.gridy = 10;
     gbc.fill = GridBagConstraints.HORIZONTAL;
     rootPanel.add(PrimeButton, gbc);
-    loadDataButton = new JButton();
-    loadDataButton.setEnabled(false);
-    loadDataButton.setLabel("Load data");
-    loadDataButton.setText("Load data");
+    logScrollBar = new JScrollBar();
+    gbc = new GridBagConstraints();
+    gbc.gridx = 5;
+    gbc.gridy = 8;
+    gbc.fill = GridBagConstraints.VERTICAL;
+    rootPanel.add(logScrollBar, gbc);
+    deviceChooserLabel = new JLabel();
+    deviceChooserLabel.setText("Choose device");
     gbc = new GridBagConstraints();
     gbc.gridx = 0;
-    gbc.gridy = 3;
-    gbc.fill = GridBagConstraints.HORIZONTAL;
-    rootPanel.add(loadDataButton, gbc);
+    gbc.gridy = 0;
+    gbc.weightx = 0.1;
+    gbc.anchor = GridBagConstraints.WEST;
+    rootPanel.add(deviceChooserLabel, gbc);
+    ScaleInput = new JSlider();
+    ScaleInput.setMajorTickSpacing(1);
+    ScaleInput.setMaximum(10);
+    ScaleInput.setMinimum(1);
+    ScaleInput.setPaintLabels(true);
+    ScaleInput.setPaintTicks(true);
+    ScaleInput.setPaintTrack(true);
+    ScaleInput.setSnapToTicks(true);
+    ScaleInput.setValue(1);
+    ScaleInput.setValueIsAdjusting(false);
+    ScaleInput.putClientProperty("Slider.paintThumbArrowShape", Boolean.FALSE);
+    gbc = new GridBagConstraints();
+    gbc.gridx = 1;
+    gbc.gridy = 9;
+    gbc.gridwidth = 6;
+    gbc.anchor = GridBagConstraints.WEST;
+    gbc.fill = GridBagConstraints.BOTH;
+    rootPanel.add(ScaleInput, gbc);
+    scaleAmplitudeLabel = new JLabel();
+    scaleAmplitudeLabel.setText("Scale\nAmplitude");
+    gbc = new GridBagConstraints();
+    gbc.gridx = 0;
+    gbc.gridy = 9;
+    gbc.anchor = GridBagConstraints.WEST;
+    rootPanel.add(scaleAmplitudeLabel, gbc);
+    tabbedPane1 = new JTabbedPane();
+    gbc = new GridBagConstraints();
+    gbc.gridx = 0;
+    gbc.gridy = 11;
+    gbc.gridwidth = 7;
+    gbc.fill = GridBagConstraints.BOTH;
+    rootPanel.add(tabbedPane1, gbc);
+    instructionsTextPanel = new JPanel();
+    instructionsTextPanel.setLayout(new GridLayoutManager(1, 1, new Insets(0, 0, 0, 0), -1, -1));
+    tabbedPane1.addTab("Instructions", instructionsTextPanel);
+    instructionsTextArea = new JTextArea();
+    instructionsTextArea.setEditable(false);
+    instructionsTextArea.setEnabled(true);
+    instructionsTextArea.setLineWrap(true);
+    instructionsTextArea.setRows(15);
+    instructionsTextArea.setText("Ensure that the USB is plugged in before starting the application. \nThe device list is only generated on startup. \n\n1. Choose the correct device from the dropdown.\n2. Click the 'Connect' button.\n3. Check the logs for an 'A:0' connection ack\nIf one is not present, the device did not connect properly, \nor you have connected to the wrong device.\n4. Prime the device if appropriate. Note that when you turn \noff priming, the current location is set as 'home' for relative\n positioning later.\n5. Set the Scale factor, this is a multiple to apply to rows in\n the data loaded. If you change this, you must re-load the data.\n6. Click the 'Load data' button and choose a file, note that we \ncurrently only support a single entry per line of a float or \ninteger value. Each row represents an absolute position relative\nto the starting position or last 'Prime'. \nUnits are measured in 1/8 degree by default. (see scaling)\n6. Click the run button.");
+    instructionsTextArea.setWrapStyleWord(false);
+    instructionsTextPanel.add(instructionsTextArea, new GridConstraints(0, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_BOTH, GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_FIXED, null, new Dimension(150, 50), null, 0, false));
+    logPanel = new JPanel();
+    logPanel.setLayout(new GridLayoutManager(1, 1, new Insets(0, 0, 0, 0), -1, -1, false, true));
+    tabbedPane1.addTab("Log", logPanel);
     logScrollPane = new JScrollPane();
     logScrollPane.setMaximumSize(new Dimension(32767, 200));
     logScrollPane.setMinimumSize(new Dimension(18, 200));
     logScrollPane.setName("Log");
     logScrollPane.setRequestFocusEnabled(true);
     logScrollPane.setVerticalScrollBarPolicy(22);
-    gbc = new GridBagConstraints();
-    gbc.gridx = 0;
-    gbc.gridy = 6;
-    gbc.gridwidth = 3;
-    gbc.weighty = 1.0;
-    gbc.fill = GridBagConstraints.BOTH;
-    rootPanel.add(logScrollPane, gbc);
+    logPanel.add(logScrollPane, new GridConstraints(0, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_BOTH, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_WANT_GROW, null, null, null, 0, false));
     logScrollPane.setBorder(BorderFactory.createTitledBorder(BorderFactory.createLoweredBevelBorder(), null, TitledBorder.DEFAULT_JUSTIFICATION, TitledBorder.DEFAULT_POSITION, null, null));
     logTextArea = new JTextArea();
     logTextArea.setColumns(30);
@@ -609,57 +719,92 @@ public class MainUI extends JFrame {
     logTextArea.setToolTipText("Application log");
     logTextArea.setWrapStyleWord(true);
     logScrollPane.setViewportView(logTextArea);
-    logScrollBar = new JScrollBar();
+    ChartPanelContainer = new JPanel();
+    ChartPanelContainer.setLayout(new GridBagLayout());
+    gbc = new GridBagConstraints();
+    gbc.gridx = 1;
+    gbc.gridy = 2;
+    gbc.gridwidth = 6;
+    gbc.gridheight = 6;
+    gbc.fill = GridBagConstraints.BOTH;
+    rootPanel.add(ChartPanelContainer, gbc);
+    pressureChartPanel.setEnabled(true);
+    gbc = new GridBagConstraints();
+    gbc.gridx = 0;
+    gbc.gridy = 0;
+    gbc.fill = GridBagConstraints.BOTH;
+    ChartPanelContainer.add(pressureChartPanel, gbc);
+    gbc = new GridBagConstraints();
+    gbc.gridx = 1;
+    gbc.gridy = 0;
+    gbc.fill = GridBagConstraints.BOTH;
+    ChartPanelContainer.add(motorFeedbackPanel, gbc);
+    timeStepMS = new JTextField();
+    timeStepMS.setColumns(6);
+    timeStepMS.setText("100");
+    timeStepMS.setToolTipText("Number of ms between movement updates");
+    gbc = new GridBagConstraints();
+    gbc.gridx = 5;
+    gbc.gridy = 1;
+    gbc.anchor = GridBagConstraints.WEST;
+    gbc.fill = GridBagConstraints.HORIZONTAL;
+    rootPanel.add(timeStepMS, gbc);
+    timeStepMSButton = new JButton();
+    timeStepMSButton.setText("Update");
+    gbc = new GridBagConstraints();
+    gbc.gridx = 6;
+    gbc.gridy = 1;
+    gbc.fill = GridBagConstraints.HORIZONTAL;
+    rootPanel.add(timeStepMSButton, gbc);
+    final JLabel label1 = new JLabel();
+    label1.setText("ms between updates, be careful at values below 15ms");
+    gbc = new GridBagConstraints();
+    gbc.gridx = 4;
+    gbc.gridy = 1;
+    gbc.anchor = GridBagConstraints.WEST;
+    rootPanel.add(label1, gbc);
+    final JPanel spacer1 = new JPanel();
     gbc = new GridBagConstraints();
     gbc.gridx = 3;
-    gbc.gridy = 6;
-    gbc.fill = GridBagConstraints.VERTICAL;
-    rootPanel.add(logScrollBar, gbc);
+    gbc.gridy = 1;
+    gbc.weightx = 1.0;
+    gbc.fill = GridBagConstraints.HORIZONTAL;
+    rootPanel.add(spacer1, gbc);
+    loadDataButton = new JButton();
+    loadDataButton.setEnabled(false);
+    loadDataButton.setLabel("Load data");
+    loadDataButton.setText("Load data");
+    gbc = new GridBagConstraints();
+    gbc.gridx = 0;
+    gbc.gridy = 3;
+    gbc.fill = GridBagConstraints.HORIZONTAL;
+    rootPanel.add(loadDataButton, gbc);
     runButton = new JButton();
     runButton.setBackground(new Color(-12794841));
     runButton.setEnabled(false);
     runButton.setText("Run");
     gbc = new GridBagConstraints();
     gbc.gridx = 0;
-    gbc.gridy = 4;
+    gbc.gridy = 6;
     gbc.fill = GridBagConstraints.HORIZONTAL;
     rootPanel.add(runButton, gbc);
-    final JLabel label1 = new JLabel();
-    label1.setText("Choose device");
+    connectSerial = new JButton();
+    connectSerial.setText("Connect");
     gbc = new GridBagConstraints();
     gbc.gridx = 0;
-    gbc.gridy = 0;
-    gbc.anchor = GridBagConstraints.WEST;
-    rootPanel.add(label1, gbc);
-    ScaleInput = new JSlider();
-    ScaleInput.setMajorTickSpacing(5);
-    ScaleInput.setMaximum(10);
-    ScaleInput.setMinimum(-10);
-    ScaleInput.setMinorTickSpacing(1);
-    ScaleInput.setPaintLabels(false);
-    ScaleInput.setPaintTicks(true);
-    ScaleInput.setPaintTrack(true);
-    ScaleInput.setSnapToTicks(true);
-    ScaleInput.setValue(0);
-    ScaleInput.setValueIsAdjusting(false);
-    ScaleInput.putClientProperty("Slider.paintThumbArrowShape", Boolean.FALSE);
-    gbc = new GridBagConstraints();
-    gbc.gridx = 1;
-    gbc.gridy = 7;
-    gbc.gridwidth = 3;
-    gbc.weightx = 1.0;
-    gbc.anchor = GridBagConstraints.WEST;
-    gbc.fill = GridBagConstraints.BOTH;
-    rootPanel.add(ScaleInput, gbc);
-    final JLabel label2 = new JLabel();
-    label2.setText("Scale speed");
+    gbc.gridy = 2;
+    gbc.fill = GridBagConstraints.HORIZONTAL;
+    rootPanel.add(connectSerial, gbc);
+    debugCheckBox = new JCheckBox();
+    debugCheckBox.setText("Debugging enabled");
     gbc = new GridBagConstraints();
     gbc.gridx = 0;
-    gbc.gridy = 7;
-    gbc.anchor = GridBagConstraints.WEST;
-    rootPanel.add(label2, gbc);
+    gbc.gridy = 4;
+    gbc.anchor = GridBagConstraints.NORTH;
+    gbc.fill = GridBagConstraints.HORIZONTAL;
+    rootPanel.add(debugCheckBox, gbc);
+    deviceChooserLabel.setLabelFor(SerialPortsComboBox);
     logScrollPane.setVerticalScrollBar(logScrollBar);
-    label1.setLabelFor(SerialPortsComboBox);
   }
 
   /**
