@@ -2,30 +2,18 @@
 <form xmlns="http://www.intellij.com/uidesigner/form/" version="1" bind-to-class="MainUI">
   <grid id="27dc6" binding="rootPanel" layout-manager="GridBagLayout">
     <constraints>
-      <xy x="20" y="20" width="2986" height="16250"/>
+      <xy x="20" y="20" width="3526" height="16326"/>
     </constraints>
     <properties/>
     <border type="bevel-lowered"/>
     <children>
-      <component id="459f4" class="javax.swing.JComboBox" binding="SerialPortsComboBox">
-        <constraints>
-          <grid row="1" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="2" anchor="8" fill="1" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <enabled value="true"/>
-          <model>
-            <item value="not found"/>
-          </model>
-          <toolTipText value="Choose serial port" noi18n="true"/>
-        </properties>
-      </component>
       <component id="564cf" class="javax.swing.JSlider" binding="PrimeSpeedSlider">
         <constraints>
-          <grid row="10" column="1" row-span="1" col-span="6" vsize-policy="0" hsize-policy="2" anchor="8" fill="3" indent="0" use-parent-layout="false"/>
+          <grid row="3" column="1" row-span="1" col-span="2" vsize-policy="0" hsize-policy="2" anchor="8" fill="3" indent="0" use-parent-layout="false"/>
           <gridbag weightx="0.0" weighty="0.0"/>
         </constraints>
         <properties>
+          <inverted value="false"/>
           <majorTickSpacing value="10"/>
           <maximum value="200"/>
           <minimum value="-200"/>
@@ -41,25 +29,9 @@
           <Slider.paintThumbArrowShape class="java.lang.Boolean" value="false"/>
         </clientProperties>
       </component>
-      <component id="ed16d" class="javax.swing.JRadioButton" binding="connectedRadioButton" default-binding="true">
-        <constraints>
-          <grid row="1" column="1" row-span="1" col-span="2" vsize-policy="0" hsize-policy="3" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <enabled value="false"/>
-          <foreground color="-1"/>
-          <hideActionText value="false"/>
-          <selected value="true"/>
-          <text value="Connected" noi18n="true"/>
-        </properties>
-        <clientProperties>
-          <html.disable class="java.lang.Boolean" value="true"/>
-        </clientProperties>
-      </component>
       <component id="62a9d" class="javax.swing.JButton" binding="PrimeButton">
         <constraints>
-          <grid row="10" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
+          <grid row="3" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
           <gridbag weightx="0.0" weighty="0.0"/>
         </constraints>
         <properties>
@@ -68,24 +40,14 @@
       </component>
       <component id="2f436" class="javax.swing.JScrollBar" binding="logScrollBar">
         <constraints>
-          <grid row="8" column="5" row-span="1" col-span="1" vsize-policy="6" hsize-policy="0" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
+          <grid row="1" column="2" row-span="1" col-span="1" vsize-policy="6" hsize-policy="0" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
           <gridbag weightx="0.0" weighty="0.0"/>
         </constraints>
         <properties/>
       </component>
-      <component id="ab84c" class="javax.swing.JLabel" binding="deviceChooserLabel">
-        <constraints>
-          <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.1" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <labelFor value="459f4"/>
-          <text value="Choose device" noi18n="true"/>
-        </properties>
-      </component>
       <component id="83ce2" class="javax.swing.JSlider" binding="ScaleInput">
         <constraints>
-          <grid row="9" column="1" row-span="1" col-span="6" vsize-policy="0" hsize-policy="2" anchor="8" fill="3" indent="0" use-parent-layout="false"/>
+          <grid row="2" column="1" row-span="1" col-span="2" vsize-policy="0" hsize-policy="2" anchor="8" fill="3" indent="0" use-parent-layout="false"/>
           <gridbag weightx="0.0" weighty="0.0"/>
         </constraints>
         <properties>
@@ -105,7 +67,7 @@
       </component>
       <component id="6473f" class="javax.swing.JLabel" binding="scaleAmplitudeLabel">
         <constraints>
-          <grid row="9" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
+          <grid row="2" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
           <gridbag weightx="0.0" weighty="0.0"/>
         </constraints>
         <properties>
@@ -114,7 +76,7 @@
       </component>
       <tabbedpane id="1311b" binding="tabbedPane1" default-binding="true">
         <constraints>
-          <grid row="11" column="0" row-span="1" col-span="7" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false">
+          <grid row="4" column="0" row-span="1" col-span="3" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false">
             <preferred-size width="200" height="200"/>
           </grid>
           <gridbag weightx="0.0" weighty="0.0"/>
@@ -191,107 +153,147 @@
       </tabbedpane>
       <grid id="ecd18" binding="ChartPanelContainer" layout-manager="GridBagLayout">
         <constraints>
-          <grid row="2" column="1" row-span="6" col-span="6" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
+          <grid row="0" column="1" row-span="1" col-span="2" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
+          <gridbag weightx="0.8" weighty="0.6"/>
         </constraints>
         <properties/>
-        <border type="none"/>
+        <border type="etched"/>
         <children>
+          <component id="5e0cd" class="org.jfree.chart.ChartPanel" binding="motorFeedbackPanel" custom-create="true">
+            <constraints>
+              <grid row="0" column="1" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
+              <gridbag weightx="0.5" weighty="1.0"/>
+            </constraints>
+            <properties/>
+          </component>
           <component id="82ad1" class="org.jfree.chart.ChartPanel" binding="pressureChartPanel" custom-create="true">
             <constraints>
               <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="1" use-parent-layout="false"/>
-              <gridbag weightx="0.0" weighty="0.0"/>
+              <gridbag weightx="0.5" weighty="1.0"/>
             </constraints>
             <properties>
               <enabled value="true"/>
             </properties>
           </component>
-          <component id="5e0cd" class="org.jfree.chart.ChartPanel" binding="motorFeedbackPanel" custom-create="true">
-            <constraints>
-              <grid row="0" column="1" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
-              <gridbag weightx="0.0" weighty="0.0"/>
-            </constraints>
-            <properties/>
-          </component>
         </children>
       </grid>
-      <component id="9c163" class="javax.swing.JTextField" binding="timeStepMS">
+      <grid id="13cda" layout-manager="GridLayoutManager" row-count="8" column-count="2" same-size-horizontally="false" same-size-vertically="false" hgap="-1" vgap="-1">
+        <margin top="0" left="0" bottom="0" right="0"/>
         <constraints>
-          <grid row="1" column="5" row-span="1" col-span="1" vsize-policy="0" hsize-policy="6" anchor="8" fill="1" indent="0" use-parent-layout="false">
-            <preferred-size width="150" height="-1"/>
-          </grid>
+          <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="3" hsize-policy="3" anchor="0" fill="3" indent="0" use-parent-layout="false"/>
           <gridbag weightx="0.0" weighty="0.0"/>
         </constraints>
-        <properties>
-          <columns value="6"/>
-          <text value="100"/>
-          <toolTipText value="Number of ms between movement updates" noi18n="true"/>
-        </properties>
-      </component>
-      <component id="b7c33" class="javax.swing.JButton" binding="timeStepMSButton">
-        <constraints>
-          <grid row="1" column="6" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <text value="Update" noi18n="true"/>
-        </properties>
-      </component>
-      <component id="66d48" class="javax.swing.JLabel">
-        <constraints>
-          <grid row="1" column="4" row-span="1" col-span="1" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <text value="ms between updates, be careful at values below 15ms" noi18n="true"/>
-        </properties>
-      </component>
-      <hspacer id="9b17b">
-        <constraints>
-          <grid row="1" column="3" row-span="1" col-span="1" vsize-policy="1" hsize-policy="6" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="1.0" weighty="0.0"/>
-        </constraints>
-      </hspacer>
-      <component id="d0845" class="javax.swing.JButton" binding="loadDataButton">
-        <constraints>
-          <grid row="3" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <enabled value="false"/>
-          <label value="Load data" noi18n="true"/>
-          <text value="Load data" noi18n="true"/>
-        </properties>
-      </component>
-      <component id="76a54" class="javax.swing.JButton" binding="runButton" default-binding="true">
-        <constraints>
-          <grid row="6" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <background color="-12794841"/>
-          <enabled value="false"/>
-          <text value="Run" noi18n="true"/>
-        </properties>
-      </component>
-      <component id="bdedd" class="javax.swing.JButton" binding="connectSerial">
-        <constraints>
-          <grid row="2" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="2" anchor="0" fill="1" indent="1" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <text value="Connect"/>
-        </properties>
-      </component>
-      <component id="d31c3" class="javax.swing.JCheckBox" binding="debugCheckBox">
-        <constraints>
-          <grid row="4" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="1" fill="1" indent="0" use-parent-layout="false"/>
-          <gridbag weightx="0.0" weighty="0.0"/>
-        </constraints>
-        <properties>
-          <text value="Debugging enabled" noi18n="true"/>
-        </properties>
-      </component>
+        <properties/>
+        <border type="none"/>
+        <children>
+          <component id="ab84c" class="javax.swing.JLabel" binding="deviceChooserLabel">
+            <constraints>
+              <grid row="0" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <labelFor value="459f4"/>
+              <text value="Choose device" noi18n="true"/>
+            </properties>
+          </component>
+          <component id="bdedd" class="javax.swing.JButton" binding="connectSerial">
+            <constraints>
+              <grid row="1" column="0" row-span="1" col-span="2" vsize-policy="0" hsize-policy="2" anchor="0" fill="1" indent="1" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <text value="Connect"/>
+            </properties>
+          </component>
+          <component id="d31c3" class="javax.swing.JCheckBox" binding="debugCheckBox">
+            <constraints>
+              <grid row="3" column="0" row-span="1" col-span="2" vsize-policy="0" hsize-policy="3" anchor="1" fill="1" indent="0" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <text value="Debugging enabled" noi18n="true"/>
+            </properties>
+          </component>
+          <component id="ed16d" class="javax.swing.JRadioButton" binding="connectedRadioButton" default-binding="true">
+            <constraints>
+              <grid row="2" column="0" row-span="1" col-span="2" vsize-policy="0" hsize-policy="3" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <enabled value="false"/>
+              <foreground color="-1"/>
+              <hideActionText value="false"/>
+              <selected value="true"/>
+              <text value="Connected" noi18n="true"/>
+            </properties>
+            <clientProperties>
+              <html.disable class="java.lang.Boolean" value="true"/>
+            </clientProperties>
+          </component>
+          <component id="76a54" class="javax.swing.JButton" binding="runButton" default-binding="true">
+            <constraints>
+              <grid row="4" column="1" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <background color="-12794841"/>
+              <enabled value="false"/>
+              <text value="Run" noi18n="true"/>
+            </properties>
+          </component>
+          <component id="d0845" class="javax.swing.JButton" binding="loadDataButton">
+            <constraints>
+              <grid row="4" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <enabled value="false"/>
+              <label value="Load data" noi18n="true"/>
+              <text value="Load data" noi18n="true"/>
+            </properties>
+          </component>
+          <component id="9c163" class="javax.swing.JTextField" binding="timeStepMS">
+            <constraints>
+              <grid row="6" column="0" row-span="1" col-span="1" vsize-policy="0" hsize-policy="6" anchor="8" fill="1" indent="0" use-parent-layout="false">
+                <preferred-size width="150" height="-1"/>
+              </grid>
+            </constraints>
+            <properties>
+              <columns value="6"/>
+              <text value="100"/>
+              <toolTipText value="Number of ms between movement updates" noi18n="true"/>
+            </properties>
+          </component>
+          <component id="b7c33" class="javax.swing.JButton" binding="timeStepMSButton">
+            <constraints>
+              <grid row="6" column="1" row-span="1" col-span="1" vsize-policy="0" hsize-policy="3" anchor="0" fill="1" indent="0" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <text value="Update" noi18n="true"/>
+            </properties>
+          </component>
+          <component id="66d48" class="javax.swing.JLabel">
+            <constraints>
+              <grid row="5" column="0" row-span="1" col-span="2" vsize-policy="0" hsize-policy="0" anchor="8" fill="0" indent="0" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <labelFor value="9c163"/>
+              <text value="ms between updates" noi18n="true"/>
+            </properties>
+          </component>
+          <component id="459f4" class="javax.swing.JComboBox" binding="SerialPortsComboBox">
+            <constraints>
+              <grid row="0" column="1" row-span="1" col-span="1" vsize-policy="0" hsize-policy="2" anchor="8" fill="1" indent="0" use-parent-layout="false"/>
+            </constraints>
+            <properties>
+              <enabled value="true"/>
+              <model>
+                <item value="not found"/>
+              </model>
+              <toolTipText value="Choose serial port" noi18n="true"/>
+            </properties>
+          </component>
+          <vspacer id="50dec">
+            <constraints>
+              <grid row="7" column="0" row-span="1" col-span="1" vsize-policy="6" hsize-policy="1" anchor="0" fill="2" indent="0" use-parent-layout="false"/>
+            </constraints>
+          </vspacer>
+        </children>
+      </grid>
     </children>
   </grid>
 </form>

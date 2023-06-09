@@ -48,15 +48,15 @@ int previousVelocity = 0;
 
 void setup() {
   Wire.begin();
-  //Serial.begin(500000);
-  Serial.begin(19200);
+  Serial.begin(500000);
+  //Serial.begin(19200);
   delay(1000);
 
   stepper.setEnablePin(enablePin);
   stepper.setPinsInverted(false,false,true);
   stepper.enableOutputs();
-  stepper.setAcceleration(1000.0);
-  stepper.setMaxSpeed(400.0);
+  stepper.setAcceleration(1500.0);
+  stepper.setMaxSpeed(1500.0);
   stepper.setSpeed(0);
 
   // Initialize and test pressure sensor.
@@ -367,7 +367,7 @@ void setNewHomePosition() {
 }
 
 void updatePriming(int val) {
-  primingSpeed = val;
+  primingSpeed = -val;
   Serial.print(F("I:P:"));
   Serial.println(primingSpeed);
 }
