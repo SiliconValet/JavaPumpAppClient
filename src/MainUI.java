@@ -8,6 +8,7 @@ import org.jfree.chart.JFreeChart;
 import org.jfree.chart.plot.Plot;
 import org.jfree.chart.plot.PlotOrientation;
 import org.jfree.chart.plot.XYPlot;
+import org.jfree.chart.renderer.xy.XYItemRenderer;
 import org.jfree.data.category.DefaultCategoryDataset;
 import org.jfree.data.time.Millisecond;
 import org.jfree.data.time.TimeSeries;
@@ -18,10 +19,20 @@ import org.jfree.data.xy.XYSeriesCollection;
 import java.awt.*;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.awt.geom.AffineTransform;
+import java.awt.geom.Rectangle2D;
+import java.awt.image.ColorModel;
 import java.io.*;
+import java.net.InetAddress;
+import java.net.Socket;
+import java.net.SocketException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Locale;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
 import javax.swing.*;
@@ -41,11 +52,11 @@ import java.io.BufferedReader;
  * The type Main ui.
  */
 public class MainUI extends JFrame {
-  public static final String version = "1.0.6";
+  public static final String version = "1.1.5";
   public static final int logBufferSize = 20000;
   private JSlider PrimeSpeedSlider;
   private JPanel rootPanel;
-  private JButton connectSerial;
+  private JButton connectDevice;
   private JButton loadDataButton;
   private ChartPanel motorFeedbackPanel;
   private ChartPanel pressureChartPanel;
@@ -54,7 +65,7 @@ public class MainUI extends JFrame {
 
   /* @param PrimeButton Button to prime the pump */
   private JButton PrimeButton;
-  private JComboBox<String> SerialPortsComboBox;
+  private JComboBox<String> DeviceComboBox;
   private JRadioButton connectedRadioButton;
   private JScrollPane logScrollPane;
   private JScrollBar logScrollBar;
@@ -70,16 +81,27 @@ public class MainUI extends JFrame {
   private JTextField timeStepMS;
   private JButton timeStepMSButton;
   private JCheckBox debugCheckBox;
+  private JCheckBox disablePressureDataCheckBox;
+  private JSlider movingAvgSlider;
+  private JButton shutDownPiButton;
 
   public volatile SerialPort serialPort;
 
-  private volatile boolean serialIsConnected = false;
+  private volatile boolean deviceIsConnected = false;
   private boolean motorPriming = false;
   private boolean motorRunning = false;
   private TimeSeries pressureSensorSeries;
+  private TimeSeries avgPressureSensorSeries;
   private XYSeries waveformDataSeries;
-  private OutputStream serialOutputStream;
-  private BufferedReader serialInputStream;
+  private PrintStream deviceOutputStream;
+  private BufferedReader deviceInputStream;
+  private Socket networkDeviceSocket = null;
+  private String deviceConnectedType = "None";
+  private double[] movingAvgLastValues = new double[30];
+  private int movingAvgIndex = 0;
+  private int movingAvgWindowSize = 10;
+  private BlockingQueue<String> inputQueue = new LinkedBlockingQueue<>();
+  private BlockingQueue<String> outputQueue = new LinkedBlockingQueue<>();
   ArrayList<Float> waveformData = new ArrayList<Float>();
 
   /**
@@ -124,7 +146,7 @@ public class MainUI extends JFrame {
     this.setVisible(true);
 
     // Connect to serial port on button click.
-    addListenerForConnectSerialButton();
+    addListenerForConnectDeviceButton();
     addListenerForLoadDataButton();
     addListenerForPrimeButton();
     addListenerForPrimeSpeedSlider();
@@ -132,6 +154,77 @@ public class MainUI extends JFrame {
     addListenerForScaleSlider();
     addListenerForTimeStepMSButton();
     addListenerForDebugCheckbox();
+    addListenerForWindowClose();
+    addListenerForDisablePressureDataCheckbox();
+    addListenerForMovingAvgSlider();
+    addListenerForShutDownPiButton();
+  }
+
+  private void addListenerForShutDownPiButton() {
+    shutDownPiButton.addActionListener(new ActionListener() {
+      /**
+       * @param e the event to be processed
+       */
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        if (!deviceIsConnected) {
+          logger("Device not connected");
+          return;
+        }
+        String cmd;
+        cmd = "!:SD\n";
+        sendDeviceData(cmd.getBytes());
+        logger("Shutdown command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
+
+      }
+    });
+  }
+
+  private void addListenerForMovingAvgSlider() {
+    movingAvgSlider.addChangeListener(new ChangeListener() {
+      /**
+       * @param e a ChangeEvent object
+       */
+      @Override
+      public void stateChanged(ChangeEvent e) {
+        movingAvgWindowSize = movingAvgSlider.getValue();
+      }
+    });
+  }
+
+  private void addListenerForDisablePressureDataCheckbox() {
+    disablePressureDataCheckBox.addActionListener(new ActionListener() {
+      /**
+       * @param e the event to be processed
+       */
+      @Override
+      public void actionPerformed(ActionEvent e) {
+        if (!deviceIsConnected) {
+          logger("Device not connected");
+          return;
+        }
+        String cmd;
+        cmd = "Z:" + (disablePressureDataCheckBox.isSelected() ? 'T' : 'F') + "\n";
+        sendDeviceData(cmd.getBytes());
+        logger("Pressure data command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
+
+      }
+    });
+  }
+
+  private void addListenerForWindowClose() {
+    addWindowListener(new WindowAdapter() {
+      @Override
+      public void windowClosing(WindowEvent e) {
+        try {
+          logger("Closing sockets");
+          networkDeviceSocket.close();
+        } catch (IOException ex) {
+          logger("Exception on attempt to close socket " + ex.getMessage());
+          throw new RuntimeException(ex);
+        }
+      }
+    });
   }
 
   private void addListenerForDebugCheckbox() {
@@ -141,13 +234,13 @@ public class MainUI extends JFrame {
        */
       @Override
       public void actionPerformed(ActionEvent e) {
-        if (!serialIsConnected) {
+        if (!deviceIsConnected) {
           logger("Serial port not connected");
           return;
         }
         String cmd;
-        cmd = "D:" + (debugCheckBox.isSelected() ? 'F' : 'T') + "\n";
-        sendSerialData(cmd.getBytes());
+        cmd = "D:" + (debugCheckBox.isSelected() ? 'T' : 'F') + "\n";
+        sendDeviceData(cmd.getBytes());
         logger("Debug command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
       }
     });
@@ -160,15 +253,15 @@ public class MainUI extends JFrame {
        */
       @Override
       public void actionPerformed(ActionEvent e) {
-        if (!serialIsConnected) {
-          logger("Serial port not connected");
+        if (!deviceIsConnected) {
+          logger("Device not connected");
           return;
         }
 
-        if (e.getActionCommand().equals("Set")) {
+        if (e.getActionCommand().equals("Update")) {
           String cmd;
           cmd = "F:" + timeStepMS.getText() + "\n";
-          sendSerialData(cmd.getBytes());
+          sendDeviceData(cmd.getBytes());
           logger("Time step command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
         }
 
@@ -185,10 +278,10 @@ public class MainUI extends JFrame {
       public void stateChanged(ChangeEvent e) {
         JSlider source = (JSlider) e.getSource();
         if (!source.getValueIsAdjusting()) {
-          if (serialIsConnected) {
+          if (deviceIsConnected) {
             String cmd;
             cmd = "X:" + ScaleInput.getValue() + "\n";
-            sendSerialData(cmd.getBytes());
+            sendDeviceData(cmd.getBytes());
             logger("Scale command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
           } else {
             logger("Serial port not connected");
@@ -205,8 +298,8 @@ public class MainUI extends JFrame {
        */
       @Override
       public void actionPerformed(ActionEvent e) {
-        if (!serialIsConnected) {
-          logger("Serial port not connected");
+        if (!deviceIsConnected) {
+          logger("Device not connected");
           return;
         }
 
@@ -214,12 +307,12 @@ public class MainUI extends JFrame {
           runButton.setText("Stop");
           runButton.setBackground(Color.RED);
           motorRunning = true;
-          sendSerialData("R:un\n".getBytes());
+          sendDeviceData("R:un\n".getBytes());
           logger("Run command 'R:un' sent");
         } else {
           runButton.setText("Run");
           runButton.setBackground(Color.GREEN);
-          sendSerialData("S:top\n".getBytes());
+          sendDeviceData("S:top\n".getBytes());
           logger("Run command 'S:top' sent");
           motorRunning = false;
         }
@@ -239,9 +332,9 @@ public class MainUI extends JFrame {
         if (!source.getValueIsAdjusting()) {
           if (motorPriming) {
             String cmd;
-            if (serialIsConnected) {
+            if (deviceIsConnected) {
               cmd = "P:" + PrimeSpeedSlider.getValue() + "\n";
-              sendSerialData(cmd.getBytes());
+              sendDeviceData(cmd.getBytes());
               logger("Prime command '" + cmd.replaceAll("[\\r\\n]+", "") + "' sent");
             } else {
               logger("Serial port not connected");
@@ -263,23 +356,23 @@ public class MainUI extends JFrame {
 
           motorPriming = true;
           PrimeButton.setText("Stop");
-          if (serialIsConnected) {
+          if (deviceIsConnected) {
             String cmd;
             cmd = "P:" + PrimeSpeedSlider.getValue() + "\n";
-            sendSerialData(cmd.getBytes());
+            sendDeviceData(cmd.getBytes());
           } else {
-            logger("Serial port not connected");
+            logger("Device not connected");
           }
         } else {
           motorPriming = false;
-          sendSerialData("S:top\n".getBytes());
+          sendDeviceData("S:top\n".getBytes());
           PrimeButton.setText("Prime");
-          if (serialIsConnected) {
+          if (deviceIsConnected) {
             String cmd;
             cmd = "H:ome\n";
-            sendSerialData(cmd.getBytes());
+            sendDeviceData(cmd.getBytes());
           } else {
-            logger("Serial port not connected");
+            logger("Device not connected");
           }
         }
       }
@@ -309,15 +402,17 @@ public class MainUI extends JFrame {
           logger("Loaded waveform '" + selectedFile.getAbsolutePath() + "'");
           logger("Waveform length: " + MainUI.this.waveformData.size());
 
-          sendSerialData(("L:" + String.valueOf(MainUI.this.waveformData.size()) + "\n").getBytes());
+          sendDeviceData(("L:" + MainUI.this.waveformData.size() + "\n").getBytes());
 
           for (Float waveformDatum : MainUI.this.waveformData) {
-            sendSerialData((waveformDatum + "\n").getBytes());
+            sendDeviceData((waveformDatum + "\n").getBytes());
           }
+          sendDeviceData("\n".getBytes());
 
           SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
+              waveformDataSeries.clear();
               for (int i = 0; i < MainUI.this.waveformData.size(); i++) {
                 waveformDataSeries.addOrUpdate(
                   (double) i,
@@ -335,13 +430,11 @@ public class MainUI extends JFrame {
   /**
    * Respond to the button click for connect button.
    */
-  private void addListenerForConnectSerialButton() {
-    connectSerial.addActionListener(new ActionListener() {
+  private void addListenerForConnectDeviceButton() {
+    connectDevice.addActionListener(new ActionListener() {
       @Override
       public void actionPerformed(ActionEvent e) {
-        String port = (String) SerialPortsComboBox.getSelectedItem();
-
-        serialConnect(e, port);
+        deviceConnect(e);
       }
     });
   }
@@ -369,10 +462,10 @@ public class MainUI extends JFrame {
     }
   }
 
-  private synchronized void sendSerialData(byte[] cmd) {
-    if (serialIsConnected) {
+  private void sendSerialData(byte[] cmd) {
+    if (deviceIsConnected) {
       try {
-        serialOutputStream.write(cmd);
+        deviceOutputStream.write(cmd);
         logger("[Serial] Sent '" + (new String(cmd, StandardCharsets.UTF_8)).trim());
       } catch (IOException ex) {
         logger("[Serial] Error sending '" + (new String(cmd, StandardCharsets.UTF_8)).trim());
@@ -382,38 +475,188 @@ public class MainUI extends JFrame {
     }
   }
 
-  private void serialConnect(ActionEvent e, String port) {
-    switch (e.getActionCommand()) {
-      case "Connect" -> {
-        logger("Connecting to: " + port);
-        SerialPort[] portList = SerialPort.getCommPorts();
-        serialPort = portList[SerialPortsComboBox.getSelectedIndex()];
-        serialPort.setBaudRate(500000);
-        serialPort.flushIOBuffers();
-        serialPort.openPort();
-        serialIsConnected = serialPort.isOpen();
-      }
-      case "Disconnect" -> {
-        serialIsConnected = false;
-        serialPort.closePort();
-      }
-    }
-
-    if (serialIsConnected) {
-      connectedRadioButton.setEnabled(true);
-      loadDataButton.setEnabled(true);
-      serialOutputStream = serialPort.getOutputStream();
-      connectSerial.setText("Disconnect");
-      addSerialReadListener(serialPort);
+  private void sendNetworkData(byte[] cmd) {
+    if (deviceIsConnected) {
+      outputQueue.add(new String(cmd).trim());
+      //logger("[Network] queued '" + (new String(cmd, StandardCharsets.UTF_8)).trim() + "'");
     } else {
-      connectedRadioButton.setEnabled(false);
-      loadDataButton.setEnabled(false);
-      runButton.setEnabled(false);
-      connectSerial.setText("Connect");
+      logger("Network device not connected");
     }
   }
 
-  private void addSerialReadListener(SerialPort activePort) {
+  private synchronized void sendDeviceData(byte[] cmd) {
+    if (deviceIsConnected) {
+      switch (deviceConnectedType) {
+        case "Serial" -> sendSerialData(cmd);
+        case "Network" -> sendNetworkData(cmd);
+        default -> logger("Error: No device connected");
+      }
+    }
+  }
+
+  private void deviceConnect(ActionEvent e) {
+    if (DeviceComboBox.getSelectedItem() != null) {
+      String actionCommand = e.getActionCommand();
+      String selectedDevice = DeviceComboBox.getSelectedItem().toString();
+      // Connect to the device.
+      if (selectedDevice.equals("Network device")) {
+        deviceConnectedType = "Network";
+        manageNetworkDeviceConnection(actionCommand);
+      } else {
+        deviceConnectedType = "Serial";
+        manageSerialDeviceConnection(actionCommand);
+      }
+
+      if (deviceIsConnected) {
+        connectedRadioButton.setEnabled(true);
+        loadDataButton.setEnabled(true);
+        connectDevice.setText("Disconnect");
+        shutDownPiButton.setEnabled(true);
+        disablePressureDataCheckBox.setEnabled(true);
+
+        logger("Connected to " + deviceConnectedType + " device");
+
+        // Set all defaults.
+        sendDeviceData(("D:" + (debugCheckBox.isSelected() ? 'T' : 'F')).getBytes());
+        sendDeviceData("S:top".getBytes());
+        // set starter step frequency
+        sendDeviceData(("F:" + timeStepMS.getText()).getBytes());
+        sendDeviceData(("Z:" + (disablePressureDataCheckBox.isSelected() ? 'T' : 'F')).getBytes());
+
+      } else {
+        setDeviceDisconnected();
+      }
+    }
+  }
+
+  private void setDeviceDisconnected() {
+    deviceIsConnected = false;
+    deviceConnectedType = "None";
+    connectedRadioButton.setEnabled(false);
+    runButton.setText("Run");
+    runButton.setEnabled(false);
+    loadDataButton.setEnabled(false);
+    disablePressureDataCheckBox.setEnabled(false);
+    connectDevice.setText("Connect");
+    shutDownPiButton.setEnabled(false);
+  }
+
+  private void manageNetworkDeviceConnection(String actionCommand) {
+    switch (actionCommand) {
+      case "Connect" -> {
+        try {
+          InetAddress address = InetAddress.getByName("pumpapp.local");
+          logger("Connecting to: " + address.getHostAddress());
+          networkDeviceSocket = new Socket("pumpapp.local", 9999);
+          // Connect to the device over the network.
+          deviceIsConnected = true;
+
+          // Create input and output streams to read from and write to the server
+          deviceOutputStream = new PrintStream(networkDeviceSocket.getOutputStream());
+          deviceInputStream = new BufferedReader(new InputStreamReader(networkDeviceSocket.getInputStream()));
+
+          Thread inputMonitor = createStreamInputMonitorThread();
+          Thread outputMonitor = createStreamOutputMonitorThread();
+
+          inputMonitor.start();
+          outputMonitor.start();
+
+        } catch (IOException ex) {
+          deviceIsConnected = false;
+          logger("Error connecting to network device: " + ex);
+        }
+      }
+      case "Disconnect" -> {
+        deviceIsConnected = false;
+        deviceOutputStream.close();
+        try {
+          deviceInputStream.close();
+        } catch (IOException ex) {
+          throw new RuntimeException(ex);
+        }
+      }
+    }
+  }
+
+  private void manageSerialDeviceConnection(String actionCommand) {
+    switch (actionCommand) {
+      case "Connect" -> {
+        String port = (String) DeviceComboBox.getSelectedItem();
+        logger("Connecting to: " + port);
+        SerialPort[] portList = SerialPort.getCommPorts();
+        serialPort = portList[DeviceComboBox.getSelectedIndex()];
+        serialPort.setBaudRate(500000);
+        serialPort.flushIOBuffers();
+        serialPort.openPort();
+        deviceIsConnected = serialPort.isOpen();
+        addDeviceReadListener(serialPort);
+      }
+      case "Disconnect" -> {
+        deviceIsConnected = false;
+        serialPort.closePort();
+      }
+    }
+  }
+
+  /**
+   * Monitors the input stream from the device.
+   *
+   * @return Thread to monitor the input stream.
+   */
+  private Thread createStreamInputMonitorThread() {
+    return new Thread(new Runnable() {
+      @Override
+      public void run() {
+        while (deviceIsConnected) {
+          try {
+            String line = deviceInputStream.readLine();
+            if (line != null) {
+              if (debugCheckBox.isSelected()) {
+                logger("[Data] Received '" + line + "'");
+              }
+              parseIncomingLine(line);
+            }
+          } catch (SocketException ex) {
+            logger("Disconnected!");
+            setDeviceDisconnected();
+          } catch (IOException ex) {
+            throw new RuntimeException(ex);
+          }
+        }
+      }
+    });
+  }
+
+  private Thread createStreamOutputMonitorThread() {
+    return new Thread(new Runnable() {
+      @Override
+      public void run() {
+        while (deviceIsConnected) {
+          try {
+            String line = outputQueue.take().trim();
+            if (debugCheckBox.isSelected()) {
+              logger("[OutData] sent '" + line + "'");
+            }
+            deviceOutputStream.write((line + "\n").getBytes());
+          } catch (InterruptedException ex) {
+            logger("Exception thrown in queue manager for data: " + ex.getMessage());
+            throw new RuntimeException(ex);
+          } catch (IOException e) {
+            logger("Could not write to output stream: " + e.getMessage());
+            throw new RuntimeException(e);
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Add a listener to the serial port to read incoming data.
+   * This is only run if using serial port logic.
+   *
+   * @param activePort Active serial port.
+   */
+  private void addDeviceReadListener(SerialPort activePort) {
 //    activePort.addDataListener(new SerialPortDataListener() {
     activePort.addDataListener(new SerialPortMessageListener() {
 
@@ -436,32 +679,67 @@ public class MainUI extends JFrame {
       public void serialEvent(SerialPortEvent serialPortEvent) {
         String incomingLine;
         incomingLine = new String(serialPortEvent.getReceivedData()).trim();
-        String[] values = incomingLine.split(":");
-        System.out.println(incomingLine + "\n");
-        switch (values[0]) {
-          case "E" -> logger("Error: " + values[1]);
-          case "A" -> logger("Ack set motor speed: " + values[1]);
-          case "D" -> {
-            logger("Data loaded to microcontroller: " + values[1] + " lines");
-            runButton.setEnabled(true);
-          }
-          case "I" -> logger("Info: " + values[1]);
-          case "P" -> {
-            double pval = Double.parseDouble(values[1]);
-            SwingUtilities.invokeLater(new Runnable() {
-              @Override
-              public void run() {
-                pressureSensorSeries.addOrUpdate(
-                  new Millisecond(),
-                  pval
-                );
-              }
-            });
-          }
-          default -> System.out.println("Unexpected command: " + values[0] + " with value " + values[1]);
-        }
+        parseIncomingLine(incomingLine);
       }
     });
+  }
+
+  /**
+   * Parse the incoming line from the device.
+   *
+   * @param line String Incoming line.
+   */
+  private void parseIncomingLine(String line) {
+    String[] values = line.trim().split(":");
+    switch (values[0]) {
+      case "E" -> logger("Error: " + values[1]);
+      case "A" -> logger("Ack set motor speed: " + values[1]);
+      case "D" -> {
+        logger("Data loaded to microcontroller: " + values[1] + " lines");
+        runButton.setEnabled(true);
+      }
+      case "V" -> logger("Info: Device connected, Software Version " + values[1]);
+      case "I" -> logger("Info: " + values[1]);
+      case "P" -> {
+        double pval = Double.parseDouble(values[1]);
+        SwingUtilities.invokeLater(new Runnable() {
+          @Override
+          public void run() {
+            pressureSensorSeries.addOrUpdate(
+              new Millisecond(),
+              pval - 730.0
+            );
+
+            avgPressureSensorSeries.addOrUpdate(
+              new Millisecond(),
+              calculateMovingAverage(pval - 730.0)
+            );
+          }
+        });
+      }
+      default -> System.out.println("Unexpected command: " + values[0] + " with value " + values[1]);
+    }
+  }
+
+  /**
+   * Calculate the moving average of the last x values.
+   * <p>
+   * X is defined by the movingAvgWindowSize property.
+   *
+   * @param latestValue Latest value to add to the moving average.
+   * @return Moving average of the last x values.
+   */
+  private float calculateMovingAverage(double latestValue) {
+    movingAvgLastValues[movingAvgIndex] = latestValue;
+    movingAvgIndex++;
+    if (movingAvgIndex >= movingAvgWindowSize) {
+      movingAvgIndex = 0;
+    }
+    float movingAvgSum = 0;
+    for (int i = 0; i < movingAvgWindowSize; i++) {
+      movingAvgSum += movingAvgLastValues[i];
+    }
+    return movingAvgSum / movingAvgWindowSize;
   }
 
   /**
@@ -489,12 +767,16 @@ public class MainUI extends JFrame {
    * Populate the combo box for serial ports.
    */
   private void populateSerialPortsComboBox() {
-    this.SerialPortsComboBox.removeAllItems();
+    this.DeviceComboBox.removeAllItems();
+
+    this.DeviceComboBox.addItem("Network device");
+
     SerialPort[] portList = SerialPort.getCommPorts();
     for (SerialPort port : portList) {
-      this.SerialPortsComboBox.addItem(port.getSystemPortName());
+      this.DeviceComboBox.addItem(port.getSystemPortName());
     }
-    this.SerialPortsComboBox.setEnabled(true);
+
+    this.DeviceComboBox.setEnabled(true);
   }
 
   /**
@@ -510,8 +792,13 @@ public class MainUI extends JFrame {
     dataset2.setValue(0, "Motor velocity", "0");
 
     pressureSensorSeries = new TimeSeries("Pressure sensor");
-    pressureSensorSeries.setMaximumItemCount(110);
+    pressureSensorSeries.setMaximumItemCount(300);
     TimeSeriesCollection pressureChartTimeSeriesCollection = new TimeSeriesCollection(pressureSensorSeries);
+
+
+    avgPressureSensorSeries = new TimeSeries("Smoothed");
+    avgPressureSensorSeries.setMaximumItemCount(300);
+    pressureChartTimeSeriesCollection.addSeries(avgPressureSensorSeries);
 
     waveformDataSeries = new XYSeries("Motor feedback");
     waveformDataSeries.setMaximumItemCount(110);
@@ -522,6 +809,8 @@ public class MainUI extends JFrame {
 
     this.pressureChartPanel = new ChartPanel(pressureChart);
     this.motorFeedbackPanel = new ChartPanel(motorFeedbackChart);
+
+
   }
 
   /**
@@ -543,7 +832,14 @@ public class MainUI extends JFrame {
 
     // Set the range as auto-ranging.
     XYPlot plot = (XYPlot) chart.getPlot();
+    //plot.getRangeAxis().setRange(730.0, 820.0);
     plot.getRangeAxis().setAutoRange(true);
+    plot.getRangeAxis().setLowerMargin(0.1);
+    plot.getRangeAxis().setUpperMargin(0.1);
+
+    XYItemRenderer r = plot.getRenderer(0);
+    r.setSeriesPaint(0, new Color(0xB9B9B9));
+    r.setSeriesPaint(1, Color.BLUE);
 
     return chart;
   }
@@ -589,8 +885,8 @@ public class MainUI extends JFrame {
     PrimeSpeedSlider = new JSlider();
     PrimeSpeedSlider.setInverted(false);
     PrimeSpeedSlider.setMajorTickSpacing(10);
-    PrimeSpeedSlider.setMaximum(200);
-    PrimeSpeedSlider.setMinimum(-200);
+    PrimeSpeedSlider.setMaximum(100);
+    PrimeSpeedSlider.setMinimum(-100);
     PrimeSpeedSlider.setMinorTickSpacing(5);
     PrimeSpeedSlider.setPaintLabels(true);
     PrimeSpeedSlider.setPaintTicks(true);
@@ -652,17 +948,6 @@ public class MainUI extends JFrame {
     gbc.gridwidth = 3;
     gbc.fill = GridBagConstraints.BOTH;
     rootPanel.add(tabbedPane1, gbc);
-    instructionsTextPanel = new JPanel();
-    instructionsTextPanel.setLayout(new GridLayoutManager(1, 1, new Insets(0, 0, 0, 0), -1, -1));
-    tabbedPane1.addTab("Instructions", instructionsTextPanel);
-    instructionsTextArea = new JTextArea();
-    instructionsTextArea.setEditable(false);
-    instructionsTextArea.setEnabled(true);
-    instructionsTextArea.setLineWrap(true);
-    instructionsTextArea.setRows(15);
-    instructionsTextArea.setText("Ensure that the USB is plugged in before starting the application. \nThe device list is only generated on startup. \n\n1. Choose the correct device from the dropdown.\n2. Click the 'Connect' button.\n3. Check the logs for an 'A:0' connection ack\nIf one is not present, the device did not connect properly, \nor you have connected to the wrong device.\n4. Prime the device if appropriate. Note that when you turn \noff priming, the current location is set as 'home' for relative\n positioning later.\n5. Set the Scale factor, this is a multiple to apply to rows in\n the data loaded. If you change this, you must re-load the data.\n6. Click the 'Load data' button and choose a file, note that we \ncurrently only support a single entry per line of a float or \ninteger value. Each row represents an absolute position relative\nto the starting position or last 'Prime'. \nUnits are measured in 1/8 degree by default. (see scaling)\n6. Click the run button.");
-    instructionsTextArea.setWrapStyleWord(false);
-    instructionsTextPanel.add(instructionsTextArea, new GridConstraints(0, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_BOTH, GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_FIXED, null, new Dimension(150, 50), null, 0, false));
     logPanel = new JPanel();
     logPanel.setLayout(new GridLayoutManager(1, 1, new Insets(0, 0, 0, 0), -1, -1, false, true));
     tabbedPane1.addTab("Log", logPanel);
@@ -686,6 +971,17 @@ public class MainUI extends JFrame {
     logTextArea.setToolTipText("Application log");
     logTextArea.setWrapStyleWord(true);
     logScrollPane.setViewportView(logTextArea);
+    instructionsTextPanel = new JPanel();
+    instructionsTextPanel.setLayout(new GridLayoutManager(1, 1, new Insets(0, 0, 0, 0), -1, -1));
+    tabbedPane1.addTab("Instructions", instructionsTextPanel);
+    instructionsTextArea = new JTextArea();
+    instructionsTextArea.setEditable(false);
+    instructionsTextArea.setEnabled(true);
+    instructionsTextArea.setLineWrap(true);
+    instructionsTextArea.setRows(15);
+    instructionsTextArea.setText("Ensure that the USB is plugged in before starting the application. \nThe device list is only generated on startup. \n\n1. Choose the correct device from the dropdown.\n2. Click the 'Connect' button.\n3. Check the logs for an 'A:0' connection ack\nIf one is not present, the device did not connect properly, \nor you have connected to the wrong device.\n4. Prime the device if appropriate. Note that when you turn \noff priming, the current location is set as 'home' for relative\n positioning later.\n5. Set the Scale factor, this is a multiple to apply to rows in\n the data loaded. If you change this, you must re-load the data.\n6. Click the 'Load data' button and choose a file, note that we \ncurrently only support a single entry per line of a float or \ninteger value. Each row represents an absolute position relative\nto the starting position or last 'Prime'. \nUnits are measured in 1/8 degree by default. (see scaling)\n6. Click the run button.");
+    instructionsTextArea.setWrapStyleWord(false);
+    instructionsTextPanel.add(instructionsTextArea, new GridConstraints(0, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_BOTH, GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_FIXED, null, new Dimension(150, 50), null, 0, false));
     ChartPanelContainer = new JPanel();
     ChartPanelContainer.setLayout(new GridBagLayout());
     gbc = new GridBagConstraints();
@@ -705,6 +1001,9 @@ public class MainUI extends JFrame {
     gbc.fill = GridBagConstraints.BOTH;
     ChartPanelContainer.add(motorFeedbackPanel, gbc);
     pressureChartPanel.setEnabled(true);
+    pressureChartPanel.setHorizontalAxisTrace(false);
+    pressureChartPanel.setRangeZoomable(false);
+    pressureChartPanel.setVerticalAxisTrace(true);
     gbc = new GridBagConstraints();
     gbc.gridx = 0;
     gbc.gridy = 0;
@@ -713,7 +1012,7 @@ public class MainUI extends JFrame {
     gbc.fill = GridBagConstraints.BOTH;
     ChartPanelContainer.add(pressureChartPanel, gbc);
     final JPanel panel1 = new JPanel();
-    panel1.setLayout(new GridLayoutManager(8, 2, new Insets(0, 0, 0, 0), -1, -1));
+    panel1.setLayout(new GridLayoutManager(11, 2, new Insets(0, 0, 0, 0), -1, -1));
     gbc = new GridBagConstraints();
     gbc.gridx = 0;
     gbc.gridy = 0;
@@ -721,10 +1020,10 @@ public class MainUI extends JFrame {
     rootPanel.add(panel1, gbc);
     deviceChooserLabel = new JLabel();
     deviceChooserLabel.setText("Choose device");
-    panel1.add(deviceChooserLabel, new GridConstraints(0, 0, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_NONE, GridConstraints.SIZEPOLICY_FIXED, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
-    connectSerial = new JButton();
-    connectSerial.setText("Connect");
-    panel1.add(connectSerial, new GridConstraints(1, 0, 1, 2, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 1, false));
+    panel1.add(deviceChooserLabel, new GridConstraints(0, 0, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_NONE, GridConstraints.SIZEPOLICY_FIXED, GridConstraints.SIZEPOLICY_FIXED, null, new Dimension(152, 17), null, 0, false));
+    connectDevice = new JButton();
+    connectDevice.setText("Connect");
+    panel1.add(connectDevice, new GridConstraints(1, 0, 1, 2, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 1, false));
     debugCheckBox = new JCheckBox();
     debugCheckBox.setText("Debugging enabled");
     panel1.add(debugCheckBox, new GridConstraints(3, 0, 1, 2, GridConstraints.ANCHOR_NORTH, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
@@ -740,34 +1039,52 @@ public class MainUI extends JFrame {
     runButton.setBackground(new Color(-12794841));
     runButton.setEnabled(false);
     runButton.setText("Run");
-    panel1.add(runButton, new GridConstraints(4, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+    panel1.add(runButton, new GridConstraints(6, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
     loadDataButton = new JButton();
     loadDataButton.setEnabled(false);
     loadDataButton.setLabel("Load data");
     loadDataButton.setText("Load data");
-    panel1.add(loadDataButton, new GridConstraints(4, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+    panel1.add(loadDataButton, new GridConstraints(6, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, new Dimension(152, 30), null, 0, false));
     timeStepMS = new JTextField();
     timeStepMS.setColumns(6);
-    timeStepMS.setText("100");
+    timeStepMS.setText("10");
     timeStepMS.setToolTipText("Number of ms between movement updates");
-    panel1.add(timeStepMS, new GridConstraints(6, 0, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_FIXED, null, new Dimension(150, -1), null, 0, false));
+    panel1.add(timeStepMS, new GridConstraints(8, 0, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_FIXED, null, new Dimension(152, 30), null, 0, false));
     timeStepMSButton = new JButton();
     timeStepMSButton.setText("Update");
-    panel1.add(timeStepMSButton, new GridConstraints(6, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+    panel1.add(timeStepMSButton, new GridConstraints(8, 1, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
     final JLabel label1 = new JLabel();
     label1.setText("ms between updates");
-    panel1.add(label1, new GridConstraints(5, 0, 1, 2, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_NONE, GridConstraints.SIZEPOLICY_FIXED, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
-    SerialPortsComboBox = new JComboBox();
-    SerialPortsComboBox.setEnabled(true);
+    panel1.add(label1, new GridConstraints(7, 0, 1, 2, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_NONE, GridConstraints.SIZEPOLICY_FIXED, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+    DeviceComboBox = new JComboBox();
+    DeviceComboBox.setEnabled(true);
     final DefaultComboBoxModel defaultComboBoxModel1 = new DefaultComboBoxModel();
     defaultComboBoxModel1.addElement("not found");
-    SerialPortsComboBox.setModel(defaultComboBoxModel1);
-    SerialPortsComboBox.setToolTipText("Choose serial port");
-    panel1.add(SerialPortsComboBox, new GridConstraints(0, 1, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+    DeviceComboBox.setModel(defaultComboBoxModel1);
+    DeviceComboBox.setToolTipText("Choose device");
+    panel1.add(DeviceComboBox, new GridConstraints(0, 1, 1, 1, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
     final Spacer spacer1 = new Spacer();
-    panel1.add(spacer1, new GridConstraints(7, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_VERTICAL, 1, GridConstraints.SIZEPOLICY_WANT_GROW, null, null, null, 0, false));
+    panel1.add(spacer1, new GridConstraints(10, 0, 1, 1, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_VERTICAL, 1, GridConstraints.SIZEPOLICY_WANT_GROW, null, new Dimension(152, 14), null, 0, false));
+    disablePressureDataCheckBox = new JCheckBox();
+    disablePressureDataCheckBox.setEnabled(false);
+    disablePressureDataCheckBox.setText("Disable pressure data");
+    panel1.add(disablePressureDataCheckBox, new GridConstraints(4, 0, 1, 2, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_BOTH, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
+    movingAvgSlider = new JSlider();
+    movingAvgSlider.setMajorTickSpacing(1);
+    movingAvgSlider.setMaximum(30);
+    movingAvgSlider.setMinimum(3);
+    movingAvgSlider.setPaintLabels(false);
+    movingAvgSlider.setPaintTicks(true);
+    movingAvgSlider.setSnapToTicks(false);
+    movingAvgSlider.setValue(3);
+    panel1.add(movingAvgSlider, new GridConstraints(5, 0, 1, 2, GridConstraints.ANCHOR_WEST, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_WANT_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 3, false));
+    shutDownPiButton = new JButton();
+    shutDownPiButton.setBackground(new Color(-1767424));
+    shutDownPiButton.setEnabled(false);
+    shutDownPiButton.setText("Shut down Pi");
+    panel1.add(shutDownPiButton, new GridConstraints(9, 0, 1, 2, GridConstraints.ANCHOR_CENTER, GridConstraints.FILL_HORIZONTAL, GridConstraints.SIZEPOLICY_CAN_SHRINK | GridConstraints.SIZEPOLICY_CAN_GROW, GridConstraints.SIZEPOLICY_FIXED, null, null, null, 0, false));
     logScrollPane.setVerticalScrollBar(logScrollBar);
-    deviceChooserLabel.setLabelFor(SerialPortsComboBox);
+    deviceChooserLabel.setLabelFor(DeviceComboBox);
     label1.setLabelFor(timeStepMS);
   }
 
